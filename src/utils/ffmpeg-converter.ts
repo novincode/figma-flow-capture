@@ -13,6 +13,8 @@ export interface FFmpegOptions {
   frameRate: number;
   format: string;
   quality?: 'high' | 'medium' | 'low';
+  targetWidth?: number;
+  targetHeight?: number;
 }
 
 function checkFrameSequence(inputDir: string): { totalFrames: number; missingFrames: number[] } {
@@ -72,7 +74,7 @@ async function fillMissingFrames(inputDir: string, missingFrames: number[]): Pro
 }
 
 export async function convertFramesToVideo(options: FFmpegOptions): Promise<boolean> {
-  const { inputDir, outputPath, frameRate, format, quality = 'high' } = options;
+  const { inputDir, outputPath, frameRate, format, quality = 'high', targetWidth, targetHeight } = options;
 
   // Check if FFmpeg is available
   const ffmpegAvailable = await checkFFmpegAvailability();
@@ -109,6 +111,12 @@ export async function convertFramesToVideo(options: FFmpegOptions): Promise<bool
   try {
     // Build FFmpeg command based on format and quality
     let ffmpegCmd = `ffmpeg -y -framerate ${frameRate} -i "${framesPattern}"`;
+    
+    // Add scaling filter if target dimensions are specified
+    if (targetWidth && targetHeight) {
+      ffmpegCmd += ` -vf "scale=${targetWidth}:${targetHeight}:flags=lanczos"`;
+      logger.info(`Adding scaling to ${targetWidth}x${targetHeight}`);
+    }
     
     // Add format-specific encoding options
     if (format === 'mp4') {

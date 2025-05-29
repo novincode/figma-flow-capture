@@ -8,6 +8,7 @@ export interface RecordingOptions {
   customHeight?: number;
   waitForCanvas?: boolean;
   stopMode?: 'timer' | 'manual';
+  scaleToFit?: boolean; // Scale canvas to fit specified dimensions
 }
 
 export interface RecordingResult {

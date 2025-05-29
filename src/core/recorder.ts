@@ -1,4 +1,4 @@
-import { firefox, Browser, Page } from 'playwright';
+import { firefox, Browser, Page, BrowserContext } from 'playwright';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import { logger } from '../utils/logger.js';
@@ -9,24 +9,30 @@ import { RecordingOptions, RecordingResult, CanvasInfo } from '../types/recordin
 
 export class FigmaRecorder {
   private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
   private page: Page | null = null;
   private frameCapture: FrameCapture | null = null;
   private videoCapture: VideoCapture | null = null;
-  private static sharedBrowser: Browser | null = null;
+  private static sharedContext: BrowserContext | null = null;
   private static browserRefCount = 0;
   private static persistentDataDir: string = '/tmp/figma-recorder-firefox';
 
   async initialize(): Promise<void> {
-    logger.info('Initializing Firefox browser...');
+    logger.info('Initializing Firefox browser with persistent context...');
     
-    // Check if shared browser is still connected
-    if (FigmaRecorder.sharedBrowser && !FigmaRecorder.sharedBrowser.isConnected()) {
-      logger.info('Shared browser disconnected, creating new instance');
-      FigmaRecorder.sharedBrowser = null;
-      FigmaRecorder.browserRefCount = 0;
+    // Check if shared context is still connected
+    if (FigmaRecorder.sharedContext) {
+      try {
+        // Test if context is still alive
+        await FigmaRecorder.sharedContext.pages();
+      } catch (error) {
+        logger.info('Shared context disconnected, creating new instance');
+        FigmaRecorder.sharedContext = null;
+        FigmaRecorder.browserRefCount = 0;
+      }
     }
     
-    if (!FigmaRecorder.sharedBrowser) {
+    if (!FigmaRecorder.sharedContext) {
       // Create persistent user data directory
       const fs = await import('fs/promises');
       try {
@@ -35,8 +41,8 @@ export class FigmaRecorder {
         // Directory might already exist
       }
 
-      // Launch Firefox with persistent profile for faster subsequent launches
-      FigmaRecorder.sharedBrowser = await firefox.launch({
+      // Use launchPersistentContext for better performance and session persistence
+      FigmaRecorder.sharedContext = await firefox.launchPersistentContext(FigmaRecorder.persistentDataDir, {
         headless: false, // Keep visible for debugging and monitoring
         args: [
           '--disable-web-security', // Allow cross-origin requests for Figma
@@ -46,38 +52,35 @@ export class FigmaRecorder {
           '--no-sandbox', // Disable sandboxing for better performance
           '--disable-dev-shm-usage', // Overcome limited resource problems
           '--disable-extensions-except-webgl', // Keep WebGL for Figma
-          `--user-data-dir=${FigmaRecorder.persistentDataDir}`, // Persistent profile
         ],
-        // Ensure consistent context
-        timeout: 60000,
+        viewport: { width: 1920, height: 1080 },
+        ignoreHTTPSErrors: true,
+        // Optimize for recording
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        // Enable hardware acceleration
+        hasTouch: false,
+        isMobile: false,
+        // Preload common resources
+        extraHTTPHeaders: {
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'max-age=3600'
+        },
+        // Shorter launch timeout is fine (only affects startup time)
+        timeout: 30000,
         slowMo: 50 // Reduced delay for faster recording
       });
 
-      logger.info('New shared Firefox browser created with persistent profile');
+      logger.info('New Firefox persistent context created');
     } else {
-      logger.info('Reusing existing shared Firefox browser');
+      logger.info('Reusing existing Firefox persistent context');
     }
     
-    this.browser = FigmaRecorder.sharedBrowser;
+    this.context = FigmaRecorder.sharedContext;
+    this.browser = this.context.browser(); // Get browser from context
     FigmaRecorder.browserRefCount++;
 
-    // Create new context for each recording session
-    const context = await this.browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      ignoreHTTPSErrors: true,
-      // Optimize for recording
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      // Enable hardware acceleration
-      hasTouch: false,
-      isMobile: false,
-      // Preload common resources
-      extraHTTPHeaders: {
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'max-age=3600'
-      }
-    });
-
-    this.page = await context.newPage();
+    // Create new page in the persistent context
+    this.page = await this.context.newPage();
     
     // Optimize page for recording
     await this.page.setExtraHTTPHeaders({
@@ -276,23 +279,51 @@ export class FigmaRecorder {
     logger.info(`🎬 Starting ${options.recordingMode} recording...`);
 
     try {
-      // Set custom viewport BEFORE navigating to Figma so the canvas renders correctly
-      if (options.customWidth && options.customHeight) {
-        await this.page.setViewportSize({
-          width: options.customWidth,
-          height: options.customHeight
-        });
-        logger.info(`Viewport set to ${options.customWidth}x${options.customHeight}`);
-        
-        // Give the page time to adjust to new viewport
-        await this.page.waitForTimeout(1000);
-      }
-
-      // Navigate to Figma and detect canvas
+      // Navigate to Figma first to detect canvas size for auto-sizing
       const canvasInfo = await this.navigateToFigma(options.figmaUrl, options.waitForCanvas);
       
       if (options.waitForCanvas && !canvasInfo.detected) {
         throw new Error('Canvas not found on Figma page');
+      }
+
+      // Determine final dimensions
+      let finalWidth = options.customWidth || 1920;
+      let finalHeight = options.customHeight || 1080;
+
+      // Handle auto-sizing: use canvas dimensions if detected
+      if (!options.customWidth && !options.customHeight && canvasInfo.detected && canvasInfo.bounds) {
+        finalWidth = canvasInfo.bounds.width;
+        finalHeight = canvasInfo.bounds.height;
+        logger.info(`Auto-sizing: Using canvas dimensions ${finalWidth}x${finalHeight}`);
+      } else if (options.customWidth && options.customHeight) {
+        logger.info(`Custom size: ${finalWidth}x${finalHeight}`);
+      }
+
+      // For video recording, set viewport to exact target size for precise recording
+      if (options.recordingMode === 'video') {
+        await this.page.setViewportSize({
+          width: finalWidth,
+          height: finalHeight
+        });
+        logger.info(`Video recording: Viewport set to exact size ${finalWidth}x${finalHeight}`);
+      } else {
+        // For frame recording, use larger viewport to accommodate UI
+        await this.page.setViewportSize({
+          width: Math.max(finalWidth, 1400),
+          height: Math.max(finalHeight, 900)
+        });
+        logger.info(`Frame recording: Viewport set to ${Math.max(finalWidth, 1400)}x${Math.max(finalHeight, 900)}`);
+      }
+      
+      // Give the page time to adjust to new viewport
+      await this.page.waitForTimeout(1000);
+
+      // Re-detect canvas after viewport change
+      const updatedCanvasInfo = await this.detectCanvas();
+
+      // Hide Figma UI for video recording to focus on canvas only
+      if (options.recordingMode === 'video') {
+        await this.hideFigmaUI();
       }
 
       // Create recording directory with page title
@@ -307,7 +338,10 @@ export class FigmaRecorder {
         this.frameCapture = new FrameCapture(
           this.page,
           outputDir,
-          options.frameRate || 10
+          options.frameRate || 10,
+          finalWidth,
+          finalHeight,
+          false // scaleToFit disabled for frame capture too
         );
         
         // Wait for frame capture to complete before proceeding
@@ -333,6 +367,7 @@ export class FigmaRecorder {
               frameRate: options.frameRate || 30,
               format: options.format,
               quality: 'high'
+              // Removed scaling parameters - frame capture handles this natively
             });
             
             outputPath = videoPath;
@@ -349,7 +384,7 @@ export class FigmaRecorder {
         }
         
       } else {
-        // Video recording using MediaRecorder
+        // Video recording using simplified MediaRecorder
         this.videoCapture = new VideoCapture(this.page);
         
         await this.videoCapture.startRecording();
@@ -438,11 +473,15 @@ export class FigmaRecorder {
         this.page = null;
       }
       
-      // Only close shared browser when no more instances are using it
+      // Clean up instance references
+      this.context = null;
+      this.browser = null;
+      
+      // Only close shared context when no more instances are using it
       FigmaRecorder.browserRefCount--;
-      if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedBrowser) {
-        await FigmaRecorder.sharedBrowser.close();
-        FigmaRecorder.sharedBrowser = null;
+      if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
+        await FigmaRecorder.sharedContext.close();
+        FigmaRecorder.sharedContext = null;
         FigmaRecorder.browserRefCount = 0;
       }
       this.browser = null;
@@ -453,11 +492,11 @@ export class FigmaRecorder {
     }
   }
 
-  // Static method to force close shared browser
+  // Static method to force close shared context
   static async closeSharedBrowser(): Promise<void> {
-    if (FigmaRecorder.sharedBrowser) {
-      await FigmaRecorder.sharedBrowser.close();
-      FigmaRecorder.sharedBrowser = null;
+    if (FigmaRecorder.sharedContext) {
+      await FigmaRecorder.sharedContext.close();
+      FigmaRecorder.sharedContext = null;
       FigmaRecorder.browserRefCount = 0;
     }
   }
@@ -470,5 +509,147 @@ export class FigmaRecorder {
   // Get current page for advanced operations
   getPage(): Page | null {
     return this.page;
+  }
+
+  private async hideFigmaUI(): Promise<void> {
+    if (!this.page) {
+      logger.warn('No page available for UI hiding');
+      return;
+    }
+    
+    try {
+      logger.info('Hiding Figma UI elements for clean recording...');
+      
+      // Hide Figma UI elements but keep the canvas visible
+      await this.page.addStyleTag({
+        content: `
+          /* Hide Figma UI elements */
+          [data-testid="toolbar"],
+          .toolbar,
+          .figma-toolbar,
+          .prototype-player__controls,
+          .prototype-player__ui,
+          .view-header,
+          .view-canvas-toolbar,
+          .figma-ui,
+          .figma-sidebar,
+          .figma-panels {
+            display: none !important;
+          }
+          
+          /* Ensure canvas fills the viewport */
+          canvas {
+            width: 100vw !important;
+            height: 100vh !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            object-fit: contain !important;
+            background: transparent !important;
+          }
+          
+          /* Hide scrollbars */
+          ::-webkit-scrollbar {
+            display: none !important;
+          }
+          
+          /* Ensure clean background */
+          body, html {
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            background: transparent !important;
+          }
+        `
+      });
+      
+      // Wait for changes to take effect
+      await this.page.waitForTimeout(500);
+      
+    } catch (error) {
+      logger.warn('Could not hide Figma UI:', error);
+    }
+  }
+
+  private async optimizeCanvasForScaling(): Promise<void> {
+    if (!this.page) {
+      logger.warn('No page available for canvas optimization');
+      return;
+    }
+    
+    try {
+      logger.info('Optimizing canvas for scaled recording...');
+      
+      // Try to hide Figma UI elements and maximize canvas area
+      await this.page.addStyleTag({
+        content: `
+          /* Hide Figma UI elements */
+          [data-testid="toolbar"],
+          .toolbar,
+          .figma-toolbar,
+          .prototype-player__controls,
+          .prototype-player__ui,
+          .view-header,
+          .view-canvas-toolbar {
+            display: none !important;
+          }
+          
+          /* Maximize canvas area */
+          canvas {
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            object-fit: contain !important;
+          }
+          
+          /* Hide scrollbars */
+          ::-webkit-scrollbar {
+            display: none !important;
+          }
+          
+          /* Ensure full viewport usage */
+          body, html {
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+          }
+        `
+      });
+
+      // Try to enter fullscreen mode
+      await this.page.evaluate(() => {
+        // Try different methods to enter fullscreen in Figma
+        try {
+          // Press F key for fullscreen
+          const event = new KeyboardEvent('keydown', { 
+            key: 'f', 
+            code: 'KeyF',
+            ctrlKey: false,
+            metaKey: false,
+            altKey: false,
+            shiftKey: false
+          });
+          document.dispatchEvent(event);
+        } catch (e) {
+          console.log('Could not trigger fullscreen with F key');
+        }
+        
+        try {
+          // Try to request fullscreen on the canvas
+          const canvas = document.querySelector('canvas');
+          if (canvas && canvas.requestFullscreen) {
+            canvas.requestFullscreen().catch(() => {
+              console.log('Fullscreen request failed');
+            });
+          }
+        } catch (e) {
+          console.log('Could not request canvas fullscreen');
+        }
+      });
+      
+      // Wait for changes to take effect
+      await this.page.waitForTimeout(1500);
+      
+    } catch (error) {
+      logger.warn('Could not optimize canvas for scaling:', error);
+    }
   }
 }

@@ -3,7 +3,6 @@ import { logger } from './logger.js';
 
 export class VideoCapture {
   private isRecording = false;
-  private recordingData: Blob[] = [];
 
   constructor(private page: Page) {}
 
@@ -13,11 +12,9 @@ export class VideoCapture {
     }
 
     this.isRecording = true;
-    this.recordingData = [];
+    logger.info('Starting simple browser media recording...');
 
-    logger.info('Starting browser media recording...');
-
-    // Inject MediaRecorder-based recording
+    // Simple MediaRecorder implementation - no complex scaling
     await this.page.evaluate(() => {
       return new Promise<void>((resolve, reject) => {
         const canvas = document.querySelector('canvas') as HTMLCanvasElement;
@@ -34,7 +31,7 @@ export class VideoCapture {
             return;
           }
 
-          // Get canvas stream with specific frame rate
+          // Get canvas stream directly - no scaling, no complexity
           const stream = canvas.captureStream(30); // 30 FPS
           
           // Verify stream has tracks
@@ -43,51 +40,42 @@ export class VideoCapture {
             return;
           }
 
-          // Try different codec options for Firefox compatibility
+          // Simple MediaRecorder setup with best compatibility
           let mediaRecorder: MediaRecorder;
-          const codecOptions = [
-            'video/webm;codecs=vp8', // Most compatible with Firefox
-            'video/webm;codecs=vp9',
-            'video/webm',
-            ''  // Let browser choose
-          ];
-
-          let codecUsed = 'unknown';
-          for (const codec of codecOptions) {
-            try {
-              if (codec === '' || MediaRecorder.isTypeSupported(codec)) {
-                const options: MediaRecorderOptions = {};
-                if (codec) {
-                  options.mimeType = codec;
-                }
-                // Add bitrate for better quality
-                options.videoBitsPerSecond = 2500000; // 2.5 Mbps
-                
-                mediaRecorder = new MediaRecorder(stream, options);
-                codecUsed = codec || 'browser-default';
-                console.log(`Using codec: ${codecUsed}`);
-                break;
-              }
-            } catch (e) {
-              continue;
+          try {
+            // Try WebM first (best Firefox support)
+            if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+              mediaRecorder = new MediaRecorder(stream, { 
+                mimeType: 'video/webm;codecs=vp8',
+                videoBitsPerSecond: 2500000 // 2.5 Mbps
+              });
+            } else if (MediaRecorder.isTypeSupported('video/webm')) {
+              mediaRecorder = new MediaRecorder(stream, { 
+                mimeType: 'video/webm',
+                videoBitsPerSecond: 2500000
+              });
+            } else {
+              // Fallback to browser default
+              mediaRecorder = new MediaRecorder(stream, {
+                videoBitsPerSecond: 2500000
+              });
             }
-          }
-
-          if (!mediaRecorder!) {
-            throw new Error('No supported codec found for MediaRecorder');
+          } catch (e) {
+            reject(new Error('Could not create MediaRecorder: ' + e));
+            return;
           }
 
           const chunks: Blob[] = [];
 
           mediaRecorder.ondataavailable = (event) => {
-            console.log('Data available:', event.data.size, 'bytes');
             if (event.data.size > 0) {
               chunks.push(event.data);
+              console.log('Data chunk recorded:', event.data.size, 'bytes');
             }
           };
 
           mediaRecorder.onstop = () => {
-            console.log('Recording stopped, chunks:', chunks.length);
+            console.log('Recording stopped, total chunks:', chunks.length);
             if (chunks.length === 0) {
               console.error('No recording data collected');
               (window as any).recordingError = 'No recording data found';
@@ -95,8 +83,7 @@ export class VideoCapture {
             }
             
             const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
-            console.log('Created blob:', blob.size, 'bytes');
-            // Store the blob data in window for retrieval
+            console.log('Created recording blob:', blob.size, 'bytes');
             (window as any).recordingBlob = blob;
           };
 
@@ -106,24 +93,15 @@ export class VideoCapture {
           };
 
           mediaRecorder.onstart = () => {
-            console.log('MediaRecorder started');
+            console.log('MediaRecorder started successfully');
           };
 
-          // Store recorder in window for later access
+          // Store recorder for later access
           (window as any).mediaRecorder = mediaRecorder;
           (window as any).recordingChunks = chunks;
           
-          // Start recording with smaller chunk intervals for more reliable data collection
-          mediaRecorder.start(500); // Collect data every 500ms
-          
-          // Ensure the canvas is actively rendering
-          const context = canvas.getContext('2d');
-          if (context) {
-            // Force a repaint by drawing something minimal
-            const originalCompositeOperation = context.globalCompositeOperation;
-            context.globalCompositeOperation = 'source-over';
-            context.globalCompositeOperation = originalCompositeOperation;
-          }
+          // Start recording with data collection every 500ms
+          mediaRecorder.start(500);
           
           resolve();
 
@@ -140,7 +118,6 @@ export class VideoCapture {
     }
 
     this.isRecording = false;
-
     logger.info('Stopping browser media recording...');
 
     // Stop recording and get data
@@ -160,42 +137,36 @@ export class VideoCapture {
         }
 
         if (mediaRecorder.state === 'inactive') {
-          // Already stopped, check for blob
+          // Already stopped, get the blob
           const blob = (window as any).recordingBlob;
           if (blob && blob.size > 0) {
             blob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
-              const uint8Array = new Uint8Array(arrayBuffer);
-              resolve(uint8Array);
+              resolve(new Uint8Array(arrayBuffer));
             }).catch(reject);
           } else {
-            reject(new Error('No recording data found - recording may have failed'));
+            reject(new Error('No recording data found'));
           }
           return;
         }
 
         mediaRecorder.onstop = async () => {
           try {
-            // Wait a bit for the blob to be ready
+            // Wait a moment for blob to be ready
             await new Promise(resolve => setTimeout(resolve, 100));
             
             const blob = (window as any).recordingBlob;
             if (blob && blob.size > 0) {
               console.log('Converting blob to array buffer, size:', blob.size);
               const arrayBuffer = await blob.arrayBuffer();
-              const uint8Array = new Uint8Array(arrayBuffer);
-              console.log('Converted to Uint8Array, length:', uint8Array.length);
-              resolve(uint8Array);
+              resolve(new Uint8Array(arrayBuffer));
             } else {
+              // Try to create blob from chunks directly
               const chunks = (window as any).recordingChunks;
-              console.log('No blob found, chunks available:', chunks ? chunks.length : 0);
-              
               if (chunks && chunks.length > 0) {
-                // Try to create blob from chunks directly
                 const finalBlob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
                 if (finalBlob.size > 0) {
                   const arrayBuffer = await finalBlob.arrayBuffer();
-                  const uint8Array = new Uint8Array(arrayBuffer);
-                  resolve(uint8Array);
+                  resolve(new Uint8Array(arrayBuffer));
                 } else {
                   reject(new Error('No recording data found - chunks were empty'));
                 }
@@ -208,10 +179,9 @@ export class VideoCapture {
           }
         };
 
-        // Force data collection before stopping
+        // Stop the recorder
         if (mediaRecorder.state === 'recording') {
-          mediaRecorder.requestData();
-          // Give it a moment to collect data
+          mediaRecorder.requestData(); // Get any remaining data
           setTimeout(() => {
             mediaRecorder.stop();
           }, 100);
@@ -219,6 +189,14 @@ export class VideoCapture {
           mediaRecorder.stop();
         }
       });
+    });
+
+    // Clean up
+    await this.page.evaluate(() => {
+      delete (window as any).mediaRecorder;
+      delete (window as any).recordingBlob;
+      delete (window as any).recordingChunks;
+      delete (window as any).recordingError;
     });
 
     return recordingData;

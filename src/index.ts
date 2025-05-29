@@ -69,9 +69,11 @@ async function main() {
     name: 'quality',
     message: 'Select resolution preset:',
     choices: Object.entries(RESOLUTION_PRESETS).map(([key, preset]) => ({
-      title: `${preset.name} (${preset.width}x${preset.height})`,
+      title: `${preset.name} (${preset.width === 0 ? 'Auto' : `${preset.width}x${preset.height}`})`,
       value: key
-    }))
+    })).concat([
+      { title: 'Custom - Enter your own dimensions', value: 'custom' }
+    ])
   });
 
   if (!resolutionResponse.quality) {
@@ -82,27 +84,36 @@ async function main() {
   let customHeight: number | undefined;
 
   if (resolutionResponse.quality === 'custom') {
-    const customResolution = await prompts([
-      {
-        type: 'number',
-        name: 'width',
-        message: 'Enter custom width (px):',
-        validate: (value) => value > 0 ? true : 'Width must be greater than 0'
-      },
-      {
-        type: 'number',
-        name: 'height',
-        message: 'Enter custom height (px):',
-        validate: (value) => value > 0 ? true : 'Height must be greater than 0'
+    const customSizeResponse = await prompts({
+      type: 'text',
+      name: 'dimensions',
+      message: 'Enter custom dimensions (WIDTHxHEIGHT, e.g., 1080x1080):',
+      validate: (value) => {
+        const match = value.match(/^(\d+)x(\d+)$/i);
+        if (!match) {
+          return 'Please enter dimensions in format WIDTHxHEIGHT (e.g., 1080x1080)';
+        }
+        const width = parseInt(match[1]);
+        const height = parseInt(match[2]);
+        if (width < 100 || height < 100) {
+          return 'Width and height must be at least 100 pixels';
+        }
+        if (width > 7680 || height > 4320) {
+          return 'Maximum supported resolution is 7680x4320 (8K)';
+        }
+        return true;
       }
-    ]);
+    });
 
-    if (!customResolution.width || !customResolution.height) {
+    if (!customSizeResponse.dimensions) {
       process.exit(1);
     }
 
-    customWidth = customResolution.width;
-    customHeight = customResolution.height;
+    const match = customSizeResponse.dimensions.match(/^(\d+)x(\d+)$/i);
+    if (match) {
+      customWidth = parseInt(match[1]);
+      customHeight = parseInt(match[2]);
+    }
   }
 
   // Stop mode selection
@@ -197,7 +208,8 @@ async function main() {
     waitForCanvas: advancedResponse.waitForCanvas ?? true,
     format: formatResponse.format,
     ...(customWidth && { customWidth }),
-    ...(customHeight && { customHeight })
+    ...(customHeight && { customHeight }),
+    scaleToFit: !!(customWidth && customHeight) // Enable scaling when custom dimensions are provided
   };
 
   // Show configuration summary
@@ -205,6 +217,9 @@ async function main() {
   console.log(chalk.gray(`• URL: ${options.figmaUrl}`));
   console.log(chalk.gray(`• Mode: ${options.recordingMode}`));
   console.log(chalk.gray(`• Resolution: ${customWidth ? `${customWidth}x${customHeight}` : selectedPreset.name}`));
+  if (options.scaleToFit) {
+    console.log(chalk.gray(`• Scaling: Canvas will be scaled to fit ${customWidth}x${customHeight}`));
+  }
   console.log(chalk.gray(`• Stop mode: ${stopResponse.stopMode}`));
   if (options.duration) {
     console.log(chalk.gray(`• Duration: ${options.duration}s`));

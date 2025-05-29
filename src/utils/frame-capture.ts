@@ -12,7 +12,10 @@ export class FrameCapture {
   constructor(
     private page: Page,
     private outputDir: string,
-    private frameRate: number = 10
+    private frameRate: number = 10,
+    private targetWidth?: number,
+    private targetHeight?: number,
+    private scaleToFit: boolean = false
   ) {}
 
   async startCapture(canvasInfo: CanvasInfo, duration?: number): Promise<number> {
@@ -105,36 +108,73 @@ export class FrameCapture {
     const framePath = join(framesDir, `frame_${frameNumber}.png`);
     
     try {
-      // Simple approach: screenshot the canvas area or full page
-      if (canvasInfo.detected && canvasInfo.bounds) {
-        // Screenshot just the canvas area
-        await this.page.screenshot({
-          path: framePath,
-          clip: canvasInfo.bounds,
-          type: 'png',
-          timeout: 5000,
-          animations: 'disabled'
-        });
-      } else {
-        // Fallback: screenshot the first canvas element
-        const canvas = this.page.locator('canvas').first();
-        const canvasCount = await canvas.count();
+      // Determine screenshot options based on scaling needs
+      if (this.scaleToFit && this.targetWidth && this.targetHeight) {
+        // For frame capture with scaling, we'll use a different approach
+        // Take a screenshot of the canvas and then scale it using Canvas API
+        const tempFramePath = join(framesDir, `temp_frame_${frameNumber}.png`);
         
-        if (canvasCount > 0) {
-          await canvas.screenshot({
-            path: framePath,
+        // First, take the normal screenshot
+        if (canvasInfo.detected && canvasInfo.bounds) {
+          await this.page.screenshot({
+            path: tempFramePath,
+            clip: canvasInfo.bounds,
             type: 'png',
             timeout: 5000,
             animations: 'disabled'
           });
         } else {
-          // Last resort: full page screenshot
+          const canvas = this.page.locator('canvas').first();
+          const canvasCount = await canvas.count();
+          
+          if (canvasCount > 0) {
+            await canvas.screenshot({
+              path: tempFramePath,
+              type: 'png',
+              timeout: 5000,
+              animations: 'disabled'
+            });
+          } else {
+            throw new Error('No canvas found for screenshot');
+          }
+        }
+
+        // Now scale the image using Node.js (we'll use the FFmpeg scaling instead)
+        // For now, just rename the temp file - FFmpeg will handle scaling
+        const fs = await import('fs/promises');
+        await fs.rename(tempFramePath, framePath);
+      } else {
+        // Original screenshot logic
+        if (canvasInfo.detected && canvasInfo.bounds) {
+          // Screenshot just the canvas area
           await this.page.screenshot({
             path: framePath,
+            clip: canvasInfo.bounds,
             type: 'png',
             timeout: 5000,
-            fullPage: false
+            animations: 'disabled'
           });
+        } else {
+          // Fallback: screenshot the first canvas element
+          const canvas = this.page.locator('canvas').first();
+          const canvasCount = await canvas.count();
+          
+          if (canvasCount > 0) {
+            await canvas.screenshot({
+              path: framePath,
+              type: 'png',
+              timeout: 5000,
+              animations: 'disabled'
+            });
+          } else {
+            // Last resort: full page screenshot
+            await this.page.screenshot({
+              path: framePath,
+              type: 'png',
+              timeout: 5000,
+              fullPage: false
+            });
+          }
         }
       }
     } catch (error) {

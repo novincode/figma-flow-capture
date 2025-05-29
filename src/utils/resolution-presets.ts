@@ -6,6 +6,18 @@ export interface ResolutionPreset {
 }
 
 export const RESOLUTION_PRESETS: Record<string, ResolutionPreset> = {
+  'auto': {
+    name: 'Auto (Canvas Size)',
+    width: 0, // Will be set automatically
+    height: 0, // Will be set automatically
+    description: 'Use Figma canvas dimensions'
+  },
+  'square-1080': {
+    name: 'Square 1080p',
+    width: 1080,
+    height: 1080,
+    description: 'Square (1080×1080)'
+  },
   'low': {
     name: 'Low Quality',
     width: 854,
