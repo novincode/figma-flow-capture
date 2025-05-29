@@ -16,6 +16,7 @@ recordings/
 *.mp4
 *.mov
 .browser-data
+.browser-data-video
 
 # Environment variables
 .env

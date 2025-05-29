@@ -1,20 +1,14 @@
 export interface RecordingOptions {
-  url: string;
-  outputDir?: string;
+  figmaUrl: string;
+  recordingMode: 'video' | 'frames';
+  stopMode: 'timer' | 'manual';
   duration?: number;
-  viewport?: {
-    width: number;
-    height: number;
-  };
-  quality?: 'low' | 'medium' | 'high' | 'instagram-story' | 'instagram-reel' | 'tiktok' | 'youtube-shorts' | 'custom';
-  format?: 'webm' | 'mp4';
-  recordingMode?: 'video' | 'frames';
-  stopMode?: 'timer' | 'manual' | 'auto-detect';
-  frameRate?: number;
-  waitForCanvas?: boolean;
-  autoResize?: boolean;
+  frameRate: number;
+  waitForCanvas: boolean;
+  autoResize: boolean;
   customWidth?: number;
   customHeight?: number;
+  format: 'webm' | 'mp4';
 }
 
 export interface RecordingResult {
@@ -41,4 +35,10 @@ export interface CanvasInfo {
     width: number;
     height: number;
   };
+}
+
+export interface FrameTiming {
+  frameNumber: number;
+  timestamp: number;
+  duration: number;
 }

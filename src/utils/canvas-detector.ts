@@ -41,14 +41,16 @@ export class FigmaCanvasDetector {
           return { detected: false };
         }
 
-        // Find the main Figma canvas (usually the largest one)
+        // Find the main Figma canvas (usually the largest visible one)
         let mainCanvas = canvases[0];
         let maxArea = 0;
 
         for (const canvas of canvases) {
           const rect = canvas.getBoundingClientRect();
           const area = rect.width * rect.height;
-          if (area > maxArea) {
+          
+          // Only consider visible canvases
+          if (area > maxArea && rect.width > 100 && rect.height > 100) {
             maxArea = area;
             mainCanvas = canvas;
           }
@@ -56,11 +58,15 @@ export class FigmaCanvasDetector {
 
         const rect = mainCanvas.getBoundingClientRect();
         
+        // Get scroll offset to adjust coordinates
+        const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
+        const scrollY = window.pageYOffset || document.documentElement.scrollTop;
+        
         return {
           detected: true,
           bounds: {
-            x: rect.x,
-            y: rect.y,
+            x: Math.max(0, rect.x + scrollX),
+            y: Math.max(0, rect.y + scrollY),
             width: rect.width,
             height: rect.height
           },

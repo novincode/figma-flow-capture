@@ -1,11 +1,11 @@
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
-import { mkdir, writeFile } from 'fs/promises';
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { join } from 'path';
-import { RecordingOptions, RecordingResult } from '../types/recording.js';
-import { getResolution } from '../utils/resolution-presets.js';
-import { FigmaCanvasDetector } from '../utils/canvas-detector.js';
-import { FrameCapture } from '../utils/frame-capture.js';
-import { logger } from '../utils/logger.js';
+import { RecordingOptions, RecordingResult } from '../types/recording';
+import { ensureDir, generateOutputPath } from '../utils/file-utils';
+import { logger } from '../utils/logger';
+import { FigmaCanvasDetector } from '../utils/canvas-detector';
+import { FrameCapture } from '../utils/frame-capture';
+import { getResolution } from '../utils/resolution-presets';
 
 export class FigmaRecorder {
   private browser: Browser | null = null;
@@ -13,45 +13,106 @@ export class FigmaRecorder {
   private page: Page | null = null;
   private canvasDetector: FigmaCanvasDetector | null = null;
   private frameCapture: FrameCapture | null = null;
-  private isRecording = false;
-  private static persistentContext: BrowserContext | null = null;
 
-  async startRecording(options: RecordingOptions): Promise<RecordingResult> {
+  async initialize(): Promise<void> {
     try {
-      logger.info('Starting Figma flow recording...');
+      logger.info('Initializing browser context...');
       
-      // Setup recording environment
-      await this.setupBrowser(options);
-      await this.setupPage(options);
+      const userDataDir = join(process.cwd(), '.browser-data');
+      await ensureDir(userDataDir);
       
-      // Detect and prepare canvas
+      this.context = await chromium.launchPersistentContext(userDataDir, {
+        headless: false,
+        viewport: null,
+        args: [
+          '--disable-web-security',
+          '--disable-features=VizDisplayCompositor',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--no-sandbox'
+        ],
+        ignoreHTTPSErrors: true,
+        bypassCSP: true
+      });
+      
+      logger.success('Browser context initialized');
+    } catch (error) {
+      logger.error('Failed to initialize browser context:', error);
+      throw error;
+    }
+  }
+
+  async record(options: RecordingOptions): Promise<RecordingResult> {
+    const startTime = Date.now();
+    
+    try {
+      if (!this.context) {
+        await this.initialize();
+      }
+
+      const outputDir = './recordings';
+      await ensureDir(outputDir);
+
+      const resolution = getResolution(
+        'custom',
+        options.customWidth,
+        options.customHeight
+      );
+
+      const outputPath = generateOutputPath(outputDir, options.format);
+      
+      logger.info(`Starting ${options.recordingMode} recording for: ${options.figmaUrl}`);
+      logger.info(`Resolution: ${resolution.width}×${resolution.height}`);
+      logger.info(`Output path: ${outputPath}`);
+
+      // Create or reuse page
+      if (!this.page) {
+        this.page = await this.context!.newPage();
+      }
+      
+      // Set viewport for this recording
+      await this.page.setViewportSize(resolution);
+      
+      this.canvasDetector = new FigmaCanvasDetector(this.page);
+
+      // Navigate to Figma prototype
+      await this.navigateWithRetry(options.figmaUrl);
+
+      // Wait for canvas if requested
+      let canvasInfo;
       if (options.waitForCanvas) {
-        const canvasInfo = await this.canvasDetector!.waitForCanvas();
+        canvasInfo = await this.canvasDetector.waitForCanvas();
         if (!canvasInfo.detected) {
-          throw new Error('Failed to detect Figma canvas');
+          logger.warn('Could not detect canvas, proceeding anyway...');
         }
       }
 
-      // Setup optimal recording environment
+      // Optimize page for recording
       await this.canvasDetector!.optimizeForRecording();
-      
-      // Auto-start flow if needed
-      if (options.stopMode === 'auto-detect') {
-        await this.canvasDetector!.clickPlayButton();
-        await this.canvasDetector!.waitForFlowStart();
-      }
+
+      // Try to click play button or wait for flow to start
+      await this.canvasDetector!.clickPlayButton();
+      await this.canvasDetector!.waitForFlowStart();
 
       // Start recording based on mode
-      let result: RecordingResult;
-      
+      let frameCount = 0;
       if (options.recordingMode === 'frames') {
-        result = await this.recordFrames(options);
+        frameCount = await this.recordFrames(options, canvasInfo!, outputPath);
       } else {
-        result = await this.recordVideo(options);
+        await this.recordVideo(options, outputPath);
       }
 
-      logger.success('Recording completed successfully!');
-      return result;
+      const duration = Date.now() - startTime;
+      logger.success(`Recording completed in ${Math.round(duration / 1000)}s`);
+
+      return {
+        success: true,
+        outputPath,
+        duration,
+        frameCount: options.recordingMode === 'frames' ? frameCount : undefined,
+        actualResolution: resolution
+      };
 
     } catch (error) {
       logger.error('Recording failed:', error);
@@ -59,378 +120,219 @@ export class FigmaRecorder {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       };
-    } finally {
-      await this.cleanup();
     }
   }
 
-  private async setupBrowser(options: RecordingOptions): Promise<void> {
-    logger.info('Launching browser with persistent context...');
-    
-    // Use persistent context to avoid reloading Figma every time
-    if (!FigmaRecorder.persistentContext) {
-      const userDataDir = join(process.cwd(), '.browser-data');
-      
-      FigmaRecorder.persistentContext = await chromium.launchPersistentContext(userDataDir, {
-        headless: false, // Keep visible for monitoring
-        viewport: null, // Let us control viewport per page
-        args: [
-          '--disable-web-security',
-          '--disable-features=VizDisplayCompositor',
-          '--disable-dev-shm-usage',
-          '--no-sandbox',
-          '--disable-blink-features=AutomationControlled',
-          '--disable-extensions-except',
-          '--disable-extensions',
-          '--no-first-run',
-          '--disable-default-apps',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding'
-        ],
-        ignoreHTTPSErrors: true,
-        bypassCSP: true,
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      });
-    }
-    
-    this.context = FigmaRecorder.persistentContext;
-  }
-
-  private async setupPage(options: RecordingOptions): Promise<void> {
-    const resolution = getResolution(
-      options.quality || 'high',
-      options.customWidth,
-      options.customHeight
-    );
-
-    logger.info(`Setting up page with resolution: ${resolution.width}x${resolution.height}`);
-
-    // Check if we already have a page with Figma loaded
-    const existingPages = this.context!.pages();
-    let figmaPage = existingPages.find(page => 
-      page.url().includes('figma.com') && !page.isClosed()
-    );
-
-    if (figmaPage) {
-      logger.info('Reusing existing Figma page...');
-      this.page = figmaPage;
-    } else {
-      logger.info('Creating new page...');
-      this.page = await this.context!.newPage();
-    }
-    
-    // Set viewport
-    await this.page.setViewportSize(resolution);
-    
-    // Setup canvas detector
-    this.canvasDetector = new FigmaCanvasDetector(this.page);
-    
-    // Navigate to Figma URL only if not already there
-    const currentUrl = this.page.url();
-    const targetUrl = options.url;
-    
-    if (!currentUrl.includes('figma.com') || currentUrl !== targetUrl) {
-      logger.info('Navigating to Figma prototype...');
-      
+  private async navigateWithRetry(url: string, maxRetries: number = 3): Promise<void> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Try with different wait strategies
-        await this.page.goto(targetUrl, { 
+        logger.info(`Navigation attempt ${attempt}/${maxRetries}...`);
+        
+        await this.page!.goto(url, {
           waitUntil: 'domcontentloaded',
-          timeout: 60000 // Increase timeout to 60 seconds
+          timeout: 60000
         });
         
-        // Wait for additional content to load
-        await this.page.waitForLoadState('networkidle', { timeout: 30000 });
+        // Wait for Figma to load
+        await this.page!.waitForTimeout(3000);
+        
+        // Check if we're on Figma
+        const isFigmaPage = await this.page!.evaluate(() => {
+          return window.location.hostname.includes('figma.com') || 
+                 document.title.includes('Figma') ||
+                 document.querySelector('canvas') !== null;
+        });
+        
+        if (isFigmaPage) {
+          logger.success('Successfully navigated to Figma prototype');
+          return;
+        } else {
+          throw new Error('Not on a Figma page');
+        }
         
       } catch (error) {
-        logger.warn('Initial navigation failed, trying with load state...');
+        logger.warn(`Navigation attempt ${attempt} failed:`, error);
         
-        try {
-          await this.page.goto(targetUrl, { 
-            waitUntil: 'load',
-            timeout: 60000
-          });
-        } catch (retryError) {
-          logger.warn('Standard navigation failed, trying minimal approach...');
-          
-          // Last attempt with minimal waiting
-          await this.page.goto(targetUrl, { timeout: 60000 });
+        if (attempt === maxRetries) {
+          throw new Error(`Failed to navigate after ${maxRetries} attempts: ${error}`);
         }
+        
+        await this.page!.waitForTimeout(2000);
       }
-    } else {
-      logger.info('Already on correct Figma page, skipping navigation...');
-    }
-    
-    // Wait a moment for page to settle
-    await this.page.waitForTimeout(3000);
-    
-    // Check if page loaded successfully
-    const title = await this.page.title();
-    if (title.includes('Figma')) {
-      logger.success('Figma page loaded successfully!');
-    } else {
-      logger.warn('Page may not have loaded completely, but proceeding...');
     }
   }
 
-  private async recordFrames(options: RecordingOptions): Promise<RecordingResult> {
-    logger.info('Starting frame-by-frame recording...');
-    
-    const outputDir = options.outputDir || './recordings';
-    await mkdir(outputDir, { recursive: true });
+  private async recordVideo(options: RecordingOptions, outputPath: string): Promise<void> {
+    if (!this.page) throw new Error('Page not initialized');
 
-    // Get canvas info for precise capture
+    logger.info('Starting video recording...');
+    
+    // Get canvas info for clipping
     const canvasInfo = await this.canvasDetector!.detectCanvasInfo();
     
-    this.frameCapture = new FrameCapture(
-      this.page!,
-      outputDir,
-      options.frameRate || 30
-    );
+    // Close current page and create video context
+    await this.page.close();
+    
+    const userDataDir = join(process.cwd(), '.browser-data-video');
+    await ensureDir(userDataDir);
+    
+    const videoContext = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      viewport: canvasInfo.bounds ? {
+        width: Math.round(canvasInfo.bounds.width),
+        height: Math.round(canvasInfo.bounds.height)
+      } : { width: 1920, height: 1080 },
+      recordVideo: {
+        dir: './recordings',
+        size: canvasInfo.bounds ? {
+          width: Math.round(canvasInfo.bounds.width),
+          height: Math.round(canvasInfo.bounds.height)
+        } : { width: 1920, height: 1080 }
+      },
+      args: [
+        '--disable-web-security',
+        '--no-sandbox'
+      ],
+      ignoreHTTPSErrors: true,
+      bypassCSP: true
+    });
+    
+    const recordingPage = videoContext.pages()[0] || await videoContext.newPage();
+    this.page = recordingPage;
+    
+    // Create new canvas detector
+    this.canvasDetector = new FigmaCanvasDetector(this.page);
+    
+    // Navigate and setup
+    await this.navigateWithRetry(options.figmaUrl);
+    await this.canvasDetector!.optimizeForRecording();
+    await this.canvasDetector!.clickPlayButton();
+    await this.canvasDetector!.waitForFlowStart();
+
+    if (options.stopMode === 'manual') {
+      logger.info('Recording started. Press Ctrl+C to stop.');
+      
+      if (options.duration) {
+        logger.info(`Will auto-stop after ${options.duration / 1000}s if not stopped manually`);
+        await this.page.waitForTimeout(options.duration);
+      } else {
+        // Wait for manual stop
+        await new Promise(resolve => {
+          process.on('SIGINT', resolve);
+        });
+      }
+    } else {
+      // Timer-based recording
+      const duration = options.duration || 10000;
+      logger.info(`Recording for ${duration / 1000}s...`);
+      await this.page.waitForTimeout(duration);
+    }
+    
+    // Stop video recording
+    const videoPath = await recordingPage.video()?.path();
+    await videoContext.close();
+    
+    if (videoPath) {
+      logger.success(`Video recording completed: ${videoPath}`);
+    }
+    
+    // Restore original context
+    this.page = null;
+    this.canvasDetector = null;
+  }
+
+  private async recordFrames(
+    options: RecordingOptions, 
+    canvasInfo: any, 
+    outputPath: string
+  ): Promise<number> {
+    if (!this.page) throw new Error('Page not initialized');
+
+    this.frameCapture = new FrameCapture(this.page, './recordings', options.frameRate);
+    logger.info('Starting frame-by-frame capture...');
 
     let frameCount = 0;
-    this.isRecording = true;
 
-    if (options.stopMode === 'timer' && options.duration) {
-      // Timer-based recording
-      frameCount = await this.frameCapture.startCapture(canvasInfo, options.duration);
-    } else if (options.stopMode === 'manual') {
-      // Manual stop recording
-      logger.info('Recording started. Press Ctrl+C or close the browser to stop...');
+    if (options.stopMode === 'manual') {
+      logger.info('Frame capture started. Press Ctrl+C to stop.');
       
-      // Setup manual stop handlers
-      this.setupManualStopHandlers();
+      // Start capture without duration
+      const capturePromise = this.frameCapture.startCapture(canvasInfo);
       
-      // Start capture without duration limit
-      await this.frameCapture.startCapture(canvasInfo);
+      // Wait for manual stop
+      await new Promise(resolve => {
+        const stopHandler = () => {
+          if (this.frameCapture && this.frameCapture.isActive()) {
+            this.frameCapture.stopCapture();
+          }
+          resolve(undefined);
+        };
+
+        process.on('SIGINT', stopHandler);
+
+        if (options.duration) {
+          setTimeout(() => {
+            if (this.frameCapture && this.frameCapture.isActive()) {
+              this.frameCapture.stopCapture();
+            }
+            resolve(undefined);
+          }, options.duration);
+        }
+      });
+
       frameCount = this.frameCapture.getFrameCount();
-    } else if (options.stopMode === 'auto-detect') {
-      // Auto-detect when flow ends
-      frameCount = await this.recordWithAutoDetection(canvasInfo, options);
+    } else {
+      // Timer-based frame capture
+      const duration = options.duration || 10000;
+      frameCount = await this.frameCapture.startCapture(canvasInfo, duration);
+    }
+
+    // Ensure capture is stopped
+    if (this.frameCapture && this.frameCapture.isActive()) {
+      this.frameCapture.stopCapture();
     }
 
     // Create video from frames
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const outputPath = join(outputDir, `figma-flow-${timestamp}.${options.format || 'mp4'}`);
-    
-    await this.frameCapture.createVideoFromFrames(outputPath);
-
-    return {
-      success: true,
-      outputPath,
-      frameCount,
-      actualResolution: getResolution(
-        options.quality || 'high',
-        options.customWidth,
-        options.customHeight
-      )
-    };
-  }
-
-  private async recordVideo(options: RecordingOptions): Promise<RecordingResult> {
-    logger.info('Starting video recording...');
-    
-    const outputDir = options.outputDir || './recordings';
-    await mkdir(outputDir, { recursive: true });
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const outputPath = join(outputDir, `figma-flow-${timestamp}.${options.format || 'webm'}`);
-
-    // Get canvas info for precise capture
-    const canvasInfo = await this.canvasDetector!.detectCanvasInfo();
-    
-    this.isRecording = true;
-    const startTime = Date.now();
-    
-    // Start screen recording using screenshots at regular intervals for video mode
-    let screenshots: Buffer[] = [];
-    let recordingInterval: NodeJS.Timeout;
-    
-    const captureScreenshot = async () => {
-      try {
-        let screenshot: Buffer;
-        if (canvasInfo.bounds) {
-          screenshot = await this.page!.screenshot({
-            clip: {
-              x: canvasInfo.bounds.x,
-              y: canvasInfo.bounds.y,
-              width: canvasInfo.bounds.width,
-              height: canvasInfo.bounds.height
-            },
-            type: 'png'
-          });
-        } else {
-          screenshot = await this.page!.screenshot({ type: 'png', fullPage: false });
-        }
-        screenshots.push(screenshot);
-      } catch (error) {
-        logger.error('Error capturing screenshot for video:', error);
-      }
-    };
-
-    // Start capturing screenshots at 30fps for video
-    recordingInterval = setInterval(captureScreenshot, 1000 / 30);
-
-    if (options.stopMode === 'timer' && options.duration) {
-      await this.page!.waitForTimeout(options.duration);
-    } else if (options.stopMode === 'manual') {
-      logger.info('Recording started. Press Ctrl+C or close the browser to stop...');
-      this.setupManualStopHandlers();
-      
-      // Wait indefinitely until manual stop
-      await new Promise(resolve => {
-        const checkInterval = setInterval(() => {
-          if (!this.isRecording) {
-            clearInterval(checkInterval);
-            resolve(undefined);
-          }
-        }, 1000);
-      });
-    } else if (options.stopMode === 'auto-detect') {
-      await this.waitForFlowCompletion();
+    if (frameCount > 0 && this.frameCapture) {
+      logger.info(`Creating video from ${frameCount} captured frames...`);
+      await this.frameCapture.createVideoFromFrames(outputPath);
+      logger.success('Video creation completed!');
+    } else {
+      logger.warn('No frames captured, skipping video creation');
     }
 
-    // Stop recording
-    clearInterval(recordingInterval);
-    
-    // Create video from screenshots using our frame capture utility
-    if (screenshots.length > 0) {
-      const frameCapture = new FrameCapture(this.page!, outputDir, 30);
-      
-      // Save screenshots as frames
-      const framesDir = join(outputDir, 'video-frames');
-      await mkdir(framesDir, { recursive: true });
-      
-      for (let i = 0; i < screenshots.length; i++) {
-        const frameNumber = String(i).padStart(6, '0');
-        const framePath = join(framesDir, `frame_${frameNumber}.png`);
-        await writeFile(framePath, screenshots[i]);
+    return frameCount;
+  }
+
+  async cleanup(): Promise<void> {
+    try {
+      if (this.frameCapture) {
+        this.frameCapture.stopCapture();
       }
       
-      // Create video from frames
-      await frameCapture.createVideoFromFrames(outputPath);
-    }
-    
-    const duration = Date.now() - startTime;
-
-    return {
-      success: true,
-      outputPath,
-      duration,
-      actualResolution: getResolution(
-        options.quality || 'high',
-        options.customWidth,
-        options.customHeight
-      )
-    };
-  }
-
-  private async waitForFlowCompletion(): Promise<void> {
-    logger.info('Monitoring for flow completion...');
-    
-    const maxWaitTime = 5 * 60 * 1000; // 5 minutes max
-    const startTime = Date.now();
-    
-    while ((Date.now() - startTime) < maxWaitTime && this.isRecording) {
-      await this.page!.waitForTimeout(1000);
-      
-      const isComplete = await this.page!.evaluate(() => {
-        // Look for flow completion indicators
-        const playButton = document.querySelector('[data-testid="play-button"]');
-        const restartButton = document.querySelector('[title*="Restart"], [aria-label*="Restart"]');
-        const completionIndicator = document.querySelector('.flow-complete, .prototype-complete');
-        
-        return !!(playButton || restartButton || completionIndicator);
-      });
-      
-      if (isComplete) {
-        logger.info('Flow completion detected!');
-        this.isRecording = false;
-        break;
+      if (this.page) {
+        await this.page.close();
+        this.page = null;
       }
-    }
-  }
-
-  private async recordWithAutoDetection(canvasInfo: any, options: RecordingOptions): Promise<number> {
-    // Start frame capture
-    await this.frameCapture!.startCapture(canvasInfo);
-    
-    // Monitor for flow completion indicators
-    let isFlowComplete = false;
-    const maxRecordingTime = 5 * 60 * 1000; // 5 minutes max
-    const startTime = Date.now();
-
-    while (!isFlowComplete && (Date.now() - startTime) < maxRecordingTime) {
-      await this.page!.waitForTimeout(1000);
       
-      // Check for flow completion indicators
-      isFlowComplete = await this.page!.evaluate(() => {
-        // Look for end-of-flow indicators
-        const playButton = document.querySelector('[data-testid="play-button"]');
-        const restartButton = document.querySelector('[title*="Restart"], [aria-label*="Restart"]');
-        const completionIndicator = document.querySelector('.flow-complete, .prototype-complete');
-        
-        return !!(playButton || restartButton || completionIndicator);
-      });
+      this.canvasDetector = null;
+      this.frameCapture = null;
+      
+      logger.info('Recording session cleaned up');
+    } catch (error) {
+      logger.error('Error during cleanup:', error);
+    }
+  }
 
-      if (isFlowComplete) {
-        logger.info('Flow completion detected, stopping recording...');
-        break;
+  async closeForGood(): Promise<void> {
+    try {
+      if (this.context) {
+        await this.context.close();
+        this.context = null;
       }
-    }
-
-    this.frameCapture!.stopCapture();
-    return this.frameCapture!.getFrameCount();
-  }
-
-  private setupManualStopHandlers(): void {
-    // Handle Ctrl+C
-    process.on('SIGINT', () => {
-      logger.info('Manual stop requested...');
-      this.stopRecording();
-    });
-
-    // Handle context disconnect
-    if (this.context) {
-      this.context.on('close', () => {
-        this.stopRecording();
-      });
-    }
-  }
-
-  stopRecording(): void {
-    if (!this.isRecording) return;
-    
-    this.isRecording = false;
-    if (this.frameCapture) {
-      this.frameCapture.stopCapture();
-    }
-    logger.info('Recording stopped by user.');
-  }
-
-  private async cleanup(): Promise<void> {
-    if (this.page && !this.page.isClosed()) {
-      // Don't close the page, just reset viewport to default
-      try {
-        await this.page.setViewportSize({ width: 1280, height: 720 });
-      } catch (error) {
-        // Ignore viewport errors during cleanup
-      }
-    }
-    
-    // Don't close the persistent context - keep it for reuse
-    this.isRecording = false;
-    
-    logger.info('Recording session cleaned up (keeping browser open for reuse)');
-  }
-
-  // Method to completely close browser (call manually when done)
-  static async closeBrowser(): Promise<void> {
-    if (FigmaRecorder.persistentContext) {
-      await FigmaRecorder.persistentContext.close();
-      FigmaRecorder.persistentContext = null;
-      logger.info('Browser context closed completely');
+      logger.info('Browser context closed');
+    } catch (error) {
+      logger.error('Error closing browser context:', error);
     }
   }
 }
