@@ -1,10 +1,10 @@
 import prompts from 'prompts';
 import chalk from 'chalk';
-import { FigmaRecorder } from './core/recorder.js';
-import { RecordingOptions } from './types/recording.js';
-import { RESOLUTION_PRESETS } from './utils/resolution-presets.js';
-import { checkFFmpegAvailability } from './utils/ffmpeg-checker.js';
-import { logger } from './utils/logger.js';
+import { FigmaRecorder } from './core/recorder';
+import { RecordingOptions } from './types/recording';
+import { RESOLUTION_PRESETS } from './utils/resolution-presets';
+import { checkFFmpegAvailability } from './utils/ffmpeg-checker';
+import { logger } from './utils/logger';
 
 // Global recorder for cleanup on interruption
 let globalRecorder: FigmaRecorder | null = null;

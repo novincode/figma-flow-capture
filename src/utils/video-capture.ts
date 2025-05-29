@@ -1,5 +1,5 @@
 import { Page } from 'playwright';
-import { logger } from './logger.js';
+import { logger } from './logger';
 
 /**
  * Handles real-time video recording of Figma canvas using browser MediaRecorder API.

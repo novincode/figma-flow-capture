@@ -1,6 +1,6 @@
 import { Page } from 'playwright';
 import { CanvasInfo } from '../types/recording.js';
-import { logger } from './logger.js';
+import { logger } from './logger';
 
 /**
  * Detects and analyzes Figma canvas elements for optimal recording setup.

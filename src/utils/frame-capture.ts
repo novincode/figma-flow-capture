@@ -1,7 +1,7 @@
 import { Page } from 'playwright';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { logger } from './logger.js';
+import { logger } from './logger';
 import { CanvasInfo } from '../types/recording.js';
 
 /**

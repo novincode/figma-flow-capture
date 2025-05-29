@@ -2,8 +2,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join } from 'path';
 import { existsSync, readdirSync, copyFileSync } from 'fs';
-import { logger } from './logger.js';
-import { checkFFmpegAvailability } from './ffmpeg-checker.js';
+import { logger } from './logger';
+import { checkFFmpegAvailability } from './ffmpeg-checker';
 
 const execAsync = promisify(exec);
 
