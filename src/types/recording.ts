@@ -1,26 +1,22 @@
 export interface RecordingOptions {
   figmaUrl: string;
   recordingMode: 'video' | 'frames';
-  stopMode: 'timer' | 'manual';
   duration?: number;
-  frameRate: number;
-  waitForCanvas: boolean;
-  autoResize: boolean;
+  frameRate?: number;
+  format: 'mp4' | 'webm' | 'png';
   customWidth?: number;
   customHeight?: number;
-  format: 'webm' | 'mp4';
+  waitForCanvas?: boolean;
+  stopMode?: 'timer' | 'manual';
 }
 
 export interface RecordingResult {
   success: boolean;
   outputPath?: string;
-  error?: string;
   duration?: number;
   frameCount?: number;
-  actualResolution?: {
-    width: number;
-    height: number;
-  };
+  actualResolution?: Resolution;
+  error?: string;
 }
 
 export interface CanvasInfo {
@@ -31,14 +27,9 @@ export interface CanvasInfo {
     width: number;
     height: number;
   };
-  frameSize?: {
-    width: number;
-    height: number;
-  };
 }
 
-export interface FrameTiming {
-  frameNumber: number;
-  timestamp: number;
-  duration: number;
+export interface Resolution {
+  width: number;
+  height: number;
 }

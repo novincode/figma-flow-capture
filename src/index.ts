@@ -1,10 +1,13 @@
 import prompts from 'prompts';
 import chalk from 'chalk';
-import { FigmaRecorder } from './core/recorder';
-import { RecordingOptions } from './types/recording';
-import { RESOLUTION_PRESETS } from './utils/resolution-presets';
-import { checkFFmpegAvailability } from './utils/ffmpeg-checker';
-import { logger } from './utils/logger';
+import { FigmaRecorder } from './core/recorder.js';
+import { RecordingOptions } from './types/recording.js';
+import { RESOLUTION_PRESETS } from './utils/resolution-presets.js';
+import { checkFFmpegAvailability } from './utils/ffmpeg-checker.js';
+import { logger } from './utils/logger.js';
+
+// Global recorder for cleanup on interruption
+let globalRecorder: FigmaRecorder | null = null;
 
 function normalizeUrl(url: string): string {
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -131,7 +134,7 @@ async function main() {
       process.exit(1);
     }
 
-    duration = durationResponse.duration * 1000; // Convert to milliseconds
+    duration = durationResponse.duration; // Keep in seconds
   }
 
   // Frame rate for frame-based recording
@@ -183,24 +186,15 @@ async function main() {
     initial: true
   });
 
-  const autoResizeResponse = await prompts({
-    type: 'confirm',
-    name: 'autoResize',
-    message: 'Auto-resize browser to fit selected resolution?',
-    initial: true
-  });
-
   // Build options
   const selectedPreset = RESOLUTION_PRESETS[resolutionResponse.quality as keyof typeof RESOLUTION_PRESETS];
   
   const options: RecordingOptions = {
     figmaUrl,
     recordingMode: modeResponse.recordingMode,
-    stopMode: stopResponse.stopMode,
     duration,
     frameRate,
     waitForCanvas: advancedResponse.waitForCanvas ?? true,
-    autoResize: autoResizeResponse.autoResize ?? true,
     format: formatResponse.format,
     ...(customWidth && { customWidth }),
     ...(customHeight && { customHeight })
@@ -211,16 +205,15 @@ async function main() {
   console.log(chalk.gray(`• URL: ${options.figmaUrl}`));
   console.log(chalk.gray(`• Mode: ${options.recordingMode}`));
   console.log(chalk.gray(`• Resolution: ${customWidth ? `${customWidth}x${customHeight}` : selectedPreset.name}`));
-  console.log(chalk.gray(`• Stop mode: ${options.stopMode}`));
+  console.log(chalk.gray(`• Stop mode: ${stopResponse.stopMode}`));
   if (options.duration) {
-    console.log(chalk.gray(`• Duration: ${options.duration / 1000}s`));
+    console.log(chalk.gray(`• Duration: ${options.duration}s`));
   }
   if (options.recordingMode === 'frames') {
     console.log(chalk.gray(`• Frame rate: ${options.frameRate} fps`));
   }
   console.log(chalk.gray(`• Format: ${options.format}`));
-  console.log(chalk.gray(`• Wait for canvas: ${options.waitForCanvas}`));
-  console.log(chalk.gray(`• Auto-resize: ${options.autoResize}\n`));
+  console.log(chalk.gray(`• Wait for canvas: ${options.waitForCanvas}\n`));
 
   // Confirm before starting
   const confirmResponse = await prompts({
@@ -237,9 +230,12 @@ async function main() {
 
   // Start recording
   const recorder = new FigmaRecorder();
+  globalRecorder = recorder;
   
   try {
-    const result = await recorder.record({
+    await recorder.initialize();
+    
+    const result = await recorder.startRecording({
       ...options,
       customWidth: customWidth || selectedPreset.width,
       customHeight: customHeight || selectedPreset.height
@@ -252,7 +248,7 @@ async function main() {
         logger.info(`Frames captured: ${result.frameCount}`);
       }
       if (result.duration) {
-        logger.info(`Duration: ${(result.duration / 1000).toFixed(1)}s`);
+        logger.info(`Duration: ${result.duration.toFixed(1)}s`);
       }
     } else {
       logger.error(`Recording failed: ${result.error}`);
@@ -261,16 +257,25 @@ async function main() {
   } catch (error) {
     logger.error('Recording failed:', error);
     process.exit(1);
+  } finally {
+    await recorder.cleanup();
   }
 }
 
 // Handle Ctrl+C gracefully
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log(chalk.yellow('\n\n🛑 Recording interrupted by user'));
+  if (globalRecorder) {
+    await globalRecorder.cleanup();
+  }
+  // Force close shared browser
+  await FigmaRecorder.closeSharedBrowser();
   process.exit(0);
 });
 
-main().catch((error) => {
+main().catch(async (error) => {
   logger.error('Application error:', error);
+  // Force close shared browser on error
+  await FigmaRecorder.closeSharedBrowser();
   process.exit(1);
 });
