@@ -7,16 +7,75 @@ import { VideoCapture } from '../utils/video-capture.js';
 import { convertFramesToVideo } from '../utils/ffmpeg-converter.js';
 import { RecordingOptions, RecordingResult, CanvasInfo } from '../types/recording.js';
 
+/**
+ * Main recording orchestrator for capturing Figma prototype flows.
+ * Manages browser lifecycle, recording modes, and output generation.
+ * 
+ * Key Features:
+ * - Persistent Firefox browser context for better performance
+ * - Dual recording modes: real-time video and frame-by-frame capture
+ * - Smart canvas detection and viewport optimization
+ * - Custom resolution support with proper scaling
+ * - Comprehensive error handling and recovery
+ * - Resource cleanup and memory management
+ * 
+ * Recording Modes:
+ * - **Video Mode**: Real-time MediaRecorder capture for quick recordings
+ * - **Frame Mode**: High-quality frame capture with FFmpeg video generation
+ * 
+ * @example
+ * ```typescript
+ * const recorder = new FigmaRecorder();
+ * await recorder.initialize();
+ * 
+ * const result = await recorder.record({
+ *   figmaUrl: 'https://figma.com/proto/...',
+ *   recordingMode: 'video',
+ *   duration: 30,
+ *   format: 'mp4',
+ *   customWidth: 1920,
+ *   customHeight: 1080
+ * });
+ * 
+ * if (result.success) {
+ *   console.log(`Recording saved: ${result.outputPath}`);
+ * }
+ * 
+ * await recorder.cleanup();
+ * ```
+ */
 export class FigmaRecorder {
+  /** Browser instance (null when using persistent context) */
   private browser: Browser | null = null;
+  
+  /** Current browser context */
   private context: BrowserContext | null = null;
+  
+  /** Active page for recording */
   private page: Page | null = null;
+  
+  /** Frame capture handler for high-quality recording */
   private frameCapture: FrameCapture | null = null;
+  
+  /** Video capture handler for real-time recording */
   private videoCapture: VideoCapture | null = null;
+  
+  /** Shared persistent browser context for performance */
   private static sharedContext: BrowserContext | null = null;
+  
+  /** Reference counter for shared context management */
   private static browserRefCount = 0;
+  
+  /** Directory for persistent browser data */
   private static persistentDataDir: string = '/tmp/figma-recorder-firefox';
 
+  /**
+   * Initializes the Firefox browser with persistent context for optimal performance.
+   * Sets up hardware acceleration and recording-optimized browser flags.
+   * Uses shared context pattern to avoid repeated browser launches.
+   * 
+   * @throws {Error} If browser initialization fails
+   */
   async initialize(): Promise<void> {
     logger.info('Initializing Firefox browser with persistent context...');
     
@@ -107,6 +166,27 @@ export class FigmaRecorder {
     logger.info('Firefox browser initialized successfully');
   }
 
+  /**
+   * Navigates to the specified Figma URL and initializes the page for recording.
+   * Handles page loading, Figma initialization, and optional canvas detection.
+   * 
+   * @param figmaUrl - The Figma prototype URL to navigate to
+   * @param waitForCanvas - Whether to wait for and detect the canvas element (default: true)
+   * @returns Promise resolving to canvas information if detected
+   * @throws {Error} If browser is not initialized or navigation fails
+   * 
+   * @example
+   * ```typescript
+   * const canvasInfo = await recorder.navigateToFigma(
+   *   'https://figma.com/proto/abc123/MyPrototype',
+   *   true
+   * );
+   * 
+   * if (canvasInfo.detected) {
+   *   console.log('Canvas bounds:', canvasInfo.bounds);
+   * }
+   * ```
+   */
   async navigateToFigma(figmaUrl: string, waitForCanvas: boolean = true): Promise<CanvasInfo> {
     if (!this.page) {
       throw new Error('Browser not initialized. Call initialize() first.');
@@ -152,6 +232,18 @@ export class FigmaRecorder {
     }
   }
 
+  /**
+   * Extracts and sanitizes the page title for use in recording directory names.
+   * Attempts to find Figma-specific title elements before falling back to document title.
+   * 
+   * @returns Promise resolving to a sanitized filename-safe title
+   * 
+   * @example
+   * ```typescript
+   * const title = await recorder.getPageTitle();
+   * console.log(title); // "my-figma-prototype"
+   * ```
+   */
   async getPageTitle(): Promise<string> {
     if (!this.page) {
       return 'unknown-page';
@@ -192,6 +284,19 @@ export class FigmaRecorder {
 
   private static recordingCounter = 1;
 
+  /**
+   * Creates a unique recording directory with timestamp and page title.
+   * Generates a structured path: recordings/{pageTitle}-{counter}-{timestamp}
+   * 
+   * @returns Promise resolving to the absolute path of the created directory
+   * @throws {Error} If directory creation fails
+   * 
+   * @example
+   * ```typescript
+   * const outputDir = await recorder.createRecordingDirectory();
+   * console.log(outputDir); // "/path/to/recordings/my-prototype-1-1703875200000"
+   * ```
+   */
   async createRecordingDirectory(): Promise<string> {
     const pageTitle = await this.getPageTitle();
     const timestamp = Date.now();
@@ -204,6 +309,22 @@ export class FigmaRecorder {
     return recordingDir;
   }
 
+  /**
+   * Detects and analyzes the Figma canvas element on the current page.
+   * Finds the largest canvas element and returns its positioning information.
+   * 
+   * @returns Promise resolving to canvas information including bounds and detection status
+   * 
+   * @example
+   * ```typescript
+   * const canvasInfo = await recorder.detectCanvas();
+   * if (canvasInfo.detected) {
+   *   console.log('Canvas found at:', canvasInfo.bounds);
+   * }
+   * ```
+   * 
+   * @private
+   */
   private async detectCanvas(): Promise<CanvasInfo> {
     if (!this.page) {
       throw new Error('Page not available');
@@ -271,6 +392,39 @@ export class FigmaRecorder {
     }
   }
 
+  /**
+   * Main recording orchestration method that handles the complete recording workflow.
+   * Manages navigation, canvas detection, viewport setup, recording execution, and output generation.
+   * 
+   * Features:
+   * - Automatic canvas detection and sizing
+   * - Custom resolution support with proper scaling
+   * - Dual recording modes (video/frames) with optimized settings
+   * - UI hiding for clean recordings
+   * - Frame-to-video conversion with FFmpeg
+   * - Comprehensive error handling and recovery
+   * 
+   * @param options - Recording configuration options
+   * @returns Promise resolving to recording result with success status and output information
+   * 
+   * @example
+   * ```typescript
+   * const result = await recorder.startRecording({
+   *   figmaUrl: 'https://figma.com/proto/...',
+   *   recordingMode: 'frames',
+   *   duration: 30,
+   *   format: 'mp4',
+   *   customWidth: 1920,
+   *   customHeight: 1080,
+   *   frameRate: 30
+   * });
+   * 
+   * if (result.success) {
+   *   console.log(`Recording saved: ${result.outputPath}`);
+   *   console.log(`Captured ${result.frameCount} frames in ${result.duration}s`);
+   * }
+   * ```
+   */
   async startRecording(options: RecordingOptions): Promise<RecordingResult> {
     if (!this.page) {
       throw new Error('Browser not initialized');
@@ -435,6 +589,18 @@ export class FigmaRecorder {
     }
   }
 
+  /**
+   * Stops any active recording operations and ensures proper cleanup.
+   * Handles both frame capture and video recording modes with timeout protection.
+   * 
+   * @throws {Error} If stopping recording operations fails
+   * 
+   * @example
+   * ```typescript
+   * await recorder.stopRecording();
+   * console.log('Recording stopped successfully');
+   * ```
+   */
   async stopRecording(): Promise<void> {
     logger.info('Stopping recording...');
     
@@ -463,6 +629,22 @@ export class FigmaRecorder {
     }
   }
 
+  /**
+   * Performs comprehensive cleanup of browser resources and recording components.
+   * Manages shared browser context lifecycle and reference counting for optimal resource usage.
+   * 
+   * @throws {Error} If cleanup operations fail (errors are logged but not re-thrown)
+   * 
+   * @example
+   * ```typescript
+   * try {
+   *   await recorder.cleanup();
+   *   console.log('Cleanup completed successfully');
+   * } catch (error) {
+   *   console.error('Cleanup failed:', error);
+   * }
+   * ```
+   */
   async cleanup(): Promise<void> {
     logger.info('Cleaning up browser resources...');
     
@@ -497,7 +679,17 @@ export class FigmaRecorder {
     }
   }
 
-  // Static method to force close shared context
+  /**
+   * Forces closure of the shared browser context across all recorder instances.
+   * Useful for emergency cleanup or when you need to ensure all browser resources are released.
+   * 
+   * @static
+   * @example
+   * ```typescript
+   * await FigmaRecorder.closeSharedBrowser();
+   * console.log('All browser instances closed');
+   * ```
+   */
   static async closeSharedBrowser(): Promise<void> {
     if (FigmaRecorder.sharedContext) {
       await FigmaRecorder.sharedContext.close();

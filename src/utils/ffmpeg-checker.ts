@@ -4,6 +4,20 @@ import { logger } from './logger.js';
 
 const execAsync = promisify(exec);
 
+/**
+ * Checks if FFmpeg is installed and available in the system PATH.
+ * Provides installation instructions for different operating systems.
+ * 
+ * @returns Promise that resolves to true if FFmpeg is available, false otherwise
+ * 
+ * @example
+ * ```typescript
+ * const isAvailable = await checkFFmpegAvailability();
+ * if (isAvailable) {
+ *   console.log('FFmpeg is ready for frame processing');
+ * }
+ * ```
+ */
 export async function checkFFmpegAvailability(): Promise<boolean> {
   try {
     const { stdout } = await execAsync('ffmpeg -version');
@@ -20,6 +34,20 @@ export async function checkFFmpegAvailability(): Promise<boolean> {
   }
 }
 
+/**
+ * Retrieves detailed FFmpeg version and codec information.
+ * Useful for determining available encoding options and capabilities.
+ * 
+ * @returns Promise that resolves to FFmpeg info object or null if not available
+ * 
+ * @example
+ * ```typescript
+ * const info = await getFFmpegInfo();
+ * if (info) {
+ *   console.log(`FFmpeg ${info.version} with ${info.codecs.length} codecs`);
+ * }
+ * ```
+ */
 export async function getFFmpegInfo(): Promise<{ version: string; codecs: string[] } | null> {
   try {
     const { stdout } = await execAsync('ffmpeg -version');

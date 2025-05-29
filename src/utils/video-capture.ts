@@ -1,11 +1,44 @@
 import { Page } from 'playwright';
 import { logger } from './logger.js';
 
+/**
+ * Handles real-time video recording of Figma canvas using browser MediaRecorder API.
+ * Provides simplified, direct recording without complex scaling or transformation logic.
+ * 
+ * Features:
+ * - Direct canvas stream capture at 30 FPS
+ * - WebM/VP8 encoding with fallback to MP4/H.264
+ * - Automatic format detection based on browser support
+ * - Built-in error handling and recovery
+ * 
+ * @example
+ * ```typescript
+ * const capture = new VideoCapture(page);
+ * await capture.startRecording();
+ * // ... user interaction ...
+ * const blob = await capture.stopRecording();
+ * ```
+ */
 export class VideoCapture {
+  /** Flag indicating if recording is currently active */
   private isRecording = false;
 
+  /**
+   * Creates a new VideoCapture instance.
+   * @param page - Playwright page instance containing the Figma canvas
+   */
   constructor(private page: Page) {}
 
+  /**
+   * Starts video recording of the Figma canvas.
+   * Uses MediaRecorder API to capture canvas stream directly at 30 FPS.
+   * Automatically selects best supported video format (WebM preferred, MP4 fallback).
+   * 
+   * @throws {Error} If recording is already in progress
+   * @throws {Error} If no canvas element is found
+   * @throws {Error} If canvas has no dimensions
+   * @throws {Error} If MediaRecorder setup fails
+   */
   async startRecording(): Promise<void> {
     if (this.isRecording) {
       throw new Error('Recording already in progress');
@@ -112,6 +145,16 @@ export class VideoCapture {
     });
   }
 
+  /**
+   * Stops the active video recording and returns the recorded data.
+   * Handles MediaRecorder state transitions and data collection gracefully.
+   * Automatically cleans up browser-side recording objects.
+   * 
+   * @returns Promise that resolves to the recorded video data as Uint8Array
+   * @throws {Error} If no recording is in progress
+   * @throws {Error} If no recording data was captured
+   * @throws {Error} If MediaRecorder is not found or failed
+   */
   async stopRecording(): Promise<Uint8Array> {
     if (!this.isRecording) {
       throw new Error('No recording in progress');
@@ -202,6 +245,10 @@ export class VideoCapture {
     return recordingData;
   }
 
+  /**
+   * Checks if video recording is currently active.
+   * @returns True if recording is in progress, false otherwise
+   */
   isActive(): boolean {
     return this.isRecording;
   }

@@ -4,11 +4,43 @@ import { join } from 'path';
 import { logger } from './logger.js';
 import { CanvasInfo } from '../types/recording.js';
 
+/**
+ * Handles frame-by-frame capture of Figma canvas for high-quality video generation.
+ * Captures screenshots at specified intervals and saves them as PNG files.
+ * 
+ * Features:
+ * - Configurable frame rate (default: 10 FPS)
+ * - Custom resolution support with viewport optimization
+ * - Smart canvas detection and cropping
+ * - Automatic directory structure creation
+ * - Frame numbering with zero-padding
+ * 
+ * @example
+ * ```typescript
+ * const capture = new FrameCapture(page, './output', 30, 1920, 1080);
+ * const frameCount = await capture.startCapture(canvasInfo, 10);
+ * console.log(`Captured ${frameCount} frames`);
+ * ```
+ */
 export class FrameCapture {
+  /** Current number of captured frames */
   private frameCount = 0;
+  
+  /** Flag indicating if capture is currently active */
   private isCapturing = false;
+  
+  /** Timer interval for frame capture */
   private captureInterval: NodeJS.Timeout | null = null;
 
+  /**
+   * Creates a new FrameCapture instance.
+   * @param page - Playwright page instance containing the Figma canvas
+   * @param outputDir - Directory path where frames will be saved
+   * @param frameRate - Frames per second for capture (default: 10)
+   * @param targetWidth - Custom output width in pixels (optional)
+   * @param targetHeight - Custom output height in pixels (optional)
+   * @param scaleToFit - Whether to scale content to fit target dimensions (default: false)
+   */
   constructor(
     private page: Page,
     private outputDir: string,
@@ -18,6 +50,15 @@ export class FrameCapture {
     private scaleToFit: boolean = false
   ) {}
 
+  /**
+   * Starts frame-by-frame capture of the Figma canvas.
+   * Creates output directory structure and begins capturing frames at the specified rate.
+   * 
+   * @param canvasInfo - Information about the detected canvas element
+   * @param duration - Optional capture duration in seconds (infinite if not specified)
+   * @returns Promise that resolves to the total number of captured frames
+   * @throws {Error} If capture is already in progress
+   */
   async startCapture(canvasInfo: CanvasInfo, duration?: number): Promise<number> {
     if (this.isCapturing) {
       throw new Error('Frame capture already in progress');
@@ -95,6 +136,16 @@ export class FrameCapture {
     });
   }
 
+  /**
+   * Captures a single frame from the Figma canvas.
+   * Handles both custom resolution and auto-sizing scenarios.
+   * Uses smart viewport sizing for custom dimensions.
+   * 
+   * @param framesDir - Directory where the frame image will be saved
+   * @param canvasInfo - Information about the detected canvas element
+   * @throws {Error} If page is closed or screenshot fails
+   * @private
+   */
   private async captureFrame(framesDir: string, canvasInfo: CanvasInfo): Promise<void> {
     if (!this.isCapturing) return;
 
@@ -180,6 +231,14 @@ export class FrameCapture {
     }
   }
 
+  /**
+   * Duplicates the last successfully captured frame to fill gaps.
+   * Used when frame capture fails to maintain sequence continuity.
+   * 
+   * @param framesDir - Directory containing the frame images
+   * @throws {Error} If no previous frame exists or copy operation fails
+   * @private
+   */
   private async duplicateLastFrame(framesDir: string): Promise<void> {
     if (this.frameCount <= 0) return;
     
@@ -201,6 +260,10 @@ export class FrameCapture {
     }
   }
 
+  /**
+   * Stops the active frame capture process.
+   * Cleans up timers and logs the final frame count.
+   */
   stopCapture(): void {
     if (!this.isCapturing) return;
     
@@ -209,6 +272,10 @@ export class FrameCapture {
     logger.success(`Frame capture stopped - ${this.frameCount} frames captured`);
   }
 
+  /**
+   * Cleans up capture resources and timers.
+   * @private
+   */
   private cleanup(): void {
     if (this.captureInterval) {
       clearInterval(this.captureInterval);
@@ -217,10 +284,18 @@ export class FrameCapture {
     this.isCapturing = false;
   }
 
+  /**
+   * Gets the current number of captured frames.
+   * @returns The total number of frames captured so far
+   */
   getFrameCount(): number {
     return this.frameCount;
   }
 
+  /**
+   * Checks if frame capture is currently active.
+   * @returns True if capture is in progress, false otherwise
+   */
   isActive(): boolean {
     return this.isCapturing;
   }

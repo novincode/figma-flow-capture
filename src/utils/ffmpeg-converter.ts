@@ -7,16 +7,33 @@ import { checkFFmpegAvailability } from './ffmpeg-checker.js';
 
 const execAsync = promisify(exec);
 
+/**
+ * Configuration options for FFmpeg video conversion from frame sequences.
+ */
 export interface FFmpegOptions {
+  /** Directory containing frame images */
   inputDir: string;
+  /** Output video file path */
   outputPath: string;
+  /** Video frame rate (FPS) */
   frameRate: number;
+  /** Output video format (mp4, webm, etc.) */
   format: string;
+  /** Video quality preset */
   quality?: 'high' | 'medium' | 'low';
+  /** Target video width in pixels */
   targetWidth?: number;
+  /** Target video height in pixels */
   targetHeight?: number;
 }
 
+/**
+ * Analyzes frame sequence to detect missing frames and provide statistics.
+ * 
+ * @param inputDir - Directory containing frame images
+ * @returns Object with total frame count and array of missing frame numbers
+ * @private
+ */
 function checkFrameSequence(inputDir: string): { totalFrames: number; missingFrames: number[] } {
   const files = readdirSync(inputDir).filter((f: string) => f.startsWith('frame_') && f.endsWith('.png'));
   const frameNumbers = files.map((f: string) => parseInt(f.match(/frame_(\d+)\.png/)?.[1] || '0')).sort((a: number, b: number) => a - b);
@@ -33,6 +50,14 @@ function checkFrameSequence(inputDir: string): { totalFrames: number; missingFra
   return { totalFrames: frameNumbers.length, missingFrames };
 }
 
+/**
+ * Fills missing frames in a sequence by duplicating the nearest previous frame.
+ * Ensures smooth video playback without gaps or jumps.
+ * 
+ * @param inputDir - Directory containing frame images
+ * @param missingFrames - Array of frame numbers that need to be filled
+ * @private
+ */
 async function fillMissingFrames(inputDir: string, missingFrames: number[]): Promise<void> {
   for (const frameNumber of missingFrames) {
     const missingFramePath = join(inputDir, `frame_${String(frameNumber).padStart(6, '0')}.png`);
@@ -73,6 +98,34 @@ async function fillMissingFrames(inputDir: string, missingFrames: number[]): Pro
   }
 }
 
+/**
+ * Converts a sequence of frame images to a video file using FFmpeg.
+ * Provides high-quality video encoding with customizable parameters.
+ * 
+ * Features:
+ * - Automatic missing frame detection and filling
+ * - Multiple quality presets (high, medium, low)
+ * - Custom resolution support with proper scaling
+ * - Format-specific optimization (MP4, WebM)
+ * - Progress logging and error handling
+ * 
+ * @param options - FFmpeg conversion configuration
+ * @returns Promise that resolves to true if conversion succeeded
+ * @throws {Error} If FFmpeg is not available or conversion fails
+ * 
+ * @example
+ * ```typescript
+ * await convertFramesToVideo({
+ *   inputDir: './frames',
+ *   outputPath: './output.mp4',
+ *   frameRate: 30,
+ *   format: 'mp4',
+ *   quality: 'high',
+ *   targetWidth: 1920,
+ *   targetHeight: 1080
+ * });
+ * ```
+ */
 export async function convertFramesToVideo(options: FFmpegOptions): Promise<boolean> {
   const { inputDir, outputPath, frameRate, format, quality = 'high', targetWidth, targetHeight } = options;
 

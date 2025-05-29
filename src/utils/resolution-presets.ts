@@ -1,10 +1,28 @@
+/**
+ * Defines a preset resolution configuration for recording output.
+ * Includes common social media and video format dimensions.
+ */
 export interface ResolutionPreset {
+  /** Human-readable name for the preset */
   name: string;
+  /** Width in pixels (0 for auto-detection) */
   width: number;
+  /** Height in pixels (0 for auto-detection) */
   height: number;
+  /** Detailed description including aspect ratio and use case */
   description: string;
 }
 
+/**
+ * Predefined resolution presets for common recording scenarios.
+ * Includes social media formats, standard video resolutions, and auto-detection.
+ * 
+ * @example
+ * ```typescript
+ * const preset = RESOLUTION_PRESETS['instagram-story'];
+ * console.log(`${preset.name}: ${preset.width}x${preset.height}`);
+ * ```
+ */
 export const RESOLUTION_PRESETS: Record<string, ResolutionPreset> = {
   'auto': {
     name: 'Auto (Canvas Size)',

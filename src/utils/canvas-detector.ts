@@ -2,9 +2,40 @@ import { Page } from 'playwright';
 import { CanvasInfo } from '../types/recording.js';
 import { logger } from './logger.js';
 
+/**
+ * Detects and analyzes Figma canvas elements for optimal recording setup.
+ * Handles canvas discovery, bounds detection, and readiness verification.
+ * 
+ * Features:
+ * - Multiple canvas detection with smart main canvas selection
+ * - Automatic bounds calculation for precise cropping
+ * - Load state verification for reliable recording start
+ * - Error handling and fallback strategies
+ * 
+ * @example
+ * ```typescript
+ * const detector = new FigmaCanvasDetector(page);
+ * const canvasInfo = await detector.waitForCanvas(30000);
+ * if (canvasInfo.detected) {
+ *   console.log(`Canvas: ${canvasInfo.bounds.width}x${canvasInfo.bounds.height}`);
+ * }
+ * ```
+ */
 export class FigmaCanvasDetector {
+  /**
+   * Creates a new FigmaCanvasDetector instance.
+   * @param page - Playwright page instance containing the Figma interface
+   */
   constructor(private page: Page) {}
 
+  /**
+   * Waits for Figma canvas to be fully loaded and ready for recording.
+   * Combines element detection with load state verification.
+   * 
+   * @param timeout - Maximum wait time in milliseconds (default: 30000)
+   * @returns Promise that resolves to canvas information
+   * @throws {Error} If canvas is not detected within timeout period
+   */
   async waitForCanvas(timeout: number = 30000): Promise<CanvasInfo> {
     logger.info('Waiting for Figma canvas to load...');
     
@@ -31,6 +62,12 @@ export class FigmaCanvasDetector {
     }
   }
 
+  /**
+   * Detects and analyzes canvas elements on the current page.
+   * Identifies the main Figma canvas and calculates its bounds.
+   * 
+   * @returns Promise that resolves to canvas information including bounds
+   */
   async detectCanvasInfo(): Promise<CanvasInfo> {
     try {
       // Get canvas elements and their properties
