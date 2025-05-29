@@ -250,6 +250,11 @@ async function main() {
       if (result.duration) {
         logger.info(`Duration: ${result.duration.toFixed(1)}s`);
       }
+      
+      // Wait a bit before cleanup to ensure all file operations are complete
+      logger.info('Finalizing files...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
     } else {
       logger.error(`Recording failed: ${result.error}`);
       process.exit(1);
@@ -258,6 +263,7 @@ async function main() {
     logger.error('Recording failed:', error);
     process.exit(1);
   } finally {
+    // Ensure cleanup happens after all operations are complete
     await recorder.cleanup();
   }
 }

@@ -110,6 +110,7 @@ export class FigmaRecorder {
     }
 
     logger.info(`Navigating to Figma: ${figmaUrl}`);
+    logger.info('⏳ Loading page... (this may take a moment)');
     
     try {
       // Navigate to Figma with generous timeout
@@ -120,9 +121,11 @@ export class FigmaRecorder {
 
       // Wait for page to load completely
       await this.page.waitForLoadState('domcontentloaded');
-      
-      // Give Figma extra time to initialize and render the prototype
-      await this.page.waitForTimeout(5000);
+      logger.info('✅ Page loaded successfully');
+
+      // Wait additional time for Figma to initialize
+      logger.info('⏳ Waiting for Figma to initialize...');
+      await this.page.waitForTimeout(3000);
 
       // Try to click away any dialogs or overlays that might be blocking the canvas
       try {
@@ -144,6 +147,58 @@ export class FigmaRecorder {
       logger.error('Failed to navigate to Figma:', error);
       throw new Error(`Navigation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  async getPageTitle(): Promise<string> {
+    if (!this.page) {
+      return 'unknown-page';
+    }
+
+    try {
+      // Try to get Figma-specific title first
+      const figmaTitle = await this.page.evaluate(() => {
+        // Look for Figma prototype title
+        const titleElement = document.querySelector('[data-testid="prototype-title"]') ||
+                           document.querySelector('.figma_title') ||
+                           document.querySelector('h1') ||
+                           document.querySelector('title');
+        
+        if (titleElement) {
+          return titleElement.textContent?.trim() || '';
+        }
+        
+        // Fallback to document title
+        return document.title || '';
+      });
+
+      if (figmaTitle) {
+        // Clean up the title for use as folder name
+        return figmaTitle
+          .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
+          .replace(/\s+/g, '-') // Replace spaces with hyphens
+          .toLowerCase()
+          .substring(0, 50) // Limit length
+          .replace(/-+$/, ''); // Remove trailing hyphens
+      }
+    } catch (error) {
+      logger.warn('Could not extract page title:', error);
+    }
+
+    return 'figma-recording';
+  }
+
+  private static recordingCounter = 1;
+
+  async createRecordingDirectory(): Promise<string> {
+    const pageTitle = await this.getPageTitle();
+    const timestamp = Date.now();
+    const recordingName = `${pageTitle}-${FigmaRecorder.recordingCounter++}-${timestamp}`;
+    
+    const recordingDir = join(process.cwd(), 'recordings', recordingName);
+    await mkdir(recordingDir, { recursive: true });
+    
+    logger.info(`📁 Recording directory: ${recordingName}`);
+    return recordingDir;
   }
 
   private async detectCanvas(): Promise<CanvasInfo> {
@@ -218,11 +273,7 @@ export class FigmaRecorder {
       throw new Error('Browser not initialized');
     }
 
-    const outputDir = join(process.cwd(), 'recordings', `recording-${Date.now()}`);
-    await mkdir(outputDir, { recursive: true });
-
-    logger.info(`Starting ${options.recordingMode} recording...`);
-    logger.info(`Output directory: ${outputDir}`);
+    logger.info(`🎬 Starting ${options.recordingMode} recording...`);
 
     try {
       // Set custom viewport BEFORE navigating to Figma so the canvas renders correctly
@@ -243,6 +294,9 @@ export class FigmaRecorder {
       if (options.waitForCanvas && !canvasInfo.detected) {
         throw new Error('Canvas not found on Figma page');
       }
+
+      // Create recording directory with page title
+      const outputDir = await this.createRecordingDirectory();
 
       const startTime = Date.now();
       let outputPath: string;
@@ -276,7 +330,7 @@ export class FigmaRecorder {
             await convertFramesToVideo({
               inputDir: framesDir,
               outputPath: videoPath,
-              frameRate: options.frameRate || 10,
+              frameRate: options.frameRate || 30,
               format: options.format,
               quality: 'high'
             });
@@ -285,7 +339,8 @@ export class FigmaRecorder {
             logger.success(`✅ Video created: ${videoFileName}`);
             
           } catch (error) {
-            logger.warn('Video conversion failed, keeping frames only');
+            logger.error('Video conversion failed:', error);
+            logger.warn('Keeping frames only due to conversion error');
             outputPath = framesDir;
           }
         } else {
