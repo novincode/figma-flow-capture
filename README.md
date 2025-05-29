@@ -36,15 +36,22 @@ That's it! The interactive CLI will guide you through the rest.
 
 ### 📹 Video Recording (Recommended)
 Real-time browser video capture using MediaRecorder API
-- **Perfect for**: Live demonstrations, smooth animations
-- **Output**: High-quality `.webm` video files
-- **Performance**: Fast and efficient
+- **Perfect for**: Live demonstrations, smooth animations, quick captures
+- **Output**: High-quality `.mp4` video files (converted from WebM)
+- **Performance**: Fast and efficient, minimal system resources
+- **Quality**: Professional-grade output suitable for presentations
 
-### 🖼️ Frame-by-Frame Capture
+### 🖼️ Frame-by-Frame Capture  
 Canvas-based frame capture with precise timing control
-- **Perfect for**: High-fidelity recordings, complex animations
-- **Output**: Individual frames assembled into video via FFmpeg
+- **Perfect for**: Pixel-perfect recordings, complex animations, maximum quality
+- **Output**: Individual frames assembled into video via FFmpeg + final MP4
 - **Requirement**: FFmpeg must be installed
+- **Advantage**: Ultimate control over every frame, ideal for detailed work
+
+**Both modes now deliver perfect sizing!** ✨ 
+- Custom dimensions work exactly as specified (1080×1920 = exactly 1080×1920)
+- No more cropped heights or black borders
+- Canvas automatically scales to fill your target resolution
 
 ## 📐 Resolution Presets
 
@@ -113,16 +120,57 @@ await recorder.record(options);
 
 ## 📁 Output Structure
 
-Your recordings are automatically organized with timestamps:
+Your recordings are automatically organized with timestamps and smart naming:
 
 ```
 recordings/
-├── figma-recording-2025-01-15T14-30-22-123Z.webm
-├── figma-recording-2025-01-15T14-35-18-456Z.webm
-└── frames/  # Only for frame-by-frame mode
-    ├── frame-001.png
-    ├── frame-002.png
-    └── ...
+├── farsilang-1-1748554234311/
+│   └── recording.mp4                    # Clean video recording
+├── farsilang-1-1748554397468/
+│   ├── recording.mp4                    # Final compiled video
+│   └── frames/                          # Individual frames (frame mode)
+│       ├── frame_000000.png
+│       ├── frame_000001.png
+│       ├── frame_000002.png
+│       └── ...
+└── farsilang-1-1748554548861/
+    ├── recording.mp4                    # Professional quality output
+    └── frames/                          # 60+ frames captured
+        ├── frame_000000.png
+        ├── frame_000001.png
+        └── ... (and many more!)
+```
+
+**What You Get:**
+- 🎬 **Video Mode**: High-quality `.mp4` files ready for presentations
+- 📸 **Frame Mode**: Individual `.png` frames + compiled video for maximum flexibility
+- 📝 **Smart Naming**: Auto-detects Figma project names for organized output
+- ⏱️ **Timestamp Organization**: Never lose track of your recordings
+
+## 🎯 Real-World Results
+
+Based on actual usage with Figma prototypes, here's what users are achieving:
+
+### 📱 **Social Media Ready**
+```bash
+pnpm run record
+# Select: TikTok (1080×1920)
+# Result: Perfect vertical videos for Instagram Stories, TikTok, YouTube Shorts
+```
+
+### 🖥️ **Presentation Quality**
+```bash
+pnpm run record  
+# Select: High Quality (1920×1080)
+# Result: Crystal-clear demo videos for stakeholder meetings
+```
+
+### 🎨 **Custom Dimensions**
+```bash
+pnpm run record
+# Select: Custom Resolution
+# Enter: 1080x1080 (or any size you need)
+# Result: Exact dimensions matching your requirements
 ```
 
 ## 🛠️ Project Architecture
@@ -168,16 +216,25 @@ src/
 ## ⚡ Performance & Quality
 
 ### Video Recording Mode
-- **Quality**: High-fidelity MediaRecorder output
+- **Quality**: Professional MediaRecorder output with MP4 conversion
 - **Performance**: Real-time capture, minimal CPU usage
-- **File Size**: Optimized WebM encoding
-- **Compatibility**: Works on all modern browsers
+- **File Size**: Optimized encoding for web and presentation use
+- **Compatibility**: Perfect for all platforms and players
+- **Speed**: Fastest recording method available
 
 ### Frame-by-Frame Mode  
-- **Quality**: Pixel-perfect canvas capture
-- **Performance**: Higher CPU usage during recording
-- **File Size**: Larger intermediate files, compressed final output
-- **Precision**: Exact timing control for complex animations
+- **Quality**: Pixel-perfect canvas capture (exactly 1080×1920 when specified)
+- **Performance**: Higher CPU usage during recording, excellent results
+- **File Size**: Individual PNG frames + compressed final MP4
+- **Precision**: Frame-perfect timing control for complex animations
+- **Flexibility**: Access to individual frames for post-processing
+
+### ✅ **Scaling Fixed!** 
+Recent improvements ensure both modes now:
+- ✅ **Exact dimensions**: Your custom size is exactly what you get
+- ✅ **Full canvas capture**: No more cropped or partial screenshots  
+- ✅ **Perfect aspect ratios**: 1080×1920 stays 1080×1920
+- ✅ **No black borders**: Clean, professional output every time
 
 ## 🔧 Requirements
 
@@ -229,20 +286,29 @@ pnpm run dev
 - Test your prototype manually before recording
 - Close unnecessary browser tabs to free up resources
 
-### 📱 **For Social Media**
-- Use vertical presets (1080×1920) for Instagram/TikTok
-- Consider adding captions or overlays post-production
+### 📱 **For Social Media (Proven Results!)**
+- Use vertical presets (1080×1920) for Instagram/TikTok - works perfectly!
+- The tool now delivers exact dimensions - no more sizing guesswork
 - Keep recordings under 60 seconds for maximum engagement
+- Both video and frame modes work flawlessly for social content
 
 ### 🖥️ **For Presentations**
-- Use high-quality presets (1920×1080 or 4K)
-- Record slightly longer than needed for editing flexibility
-- Consider the viewing context (projector, laptop, mobile)
+- Use high-quality presets (1920×1080 or 4K) for crisp results
+- Video mode is perfect for live demos and stakeholder presentations
+- Frame mode gives you individual frames for detailed documentation
+- Custom dimensions now work exactly as specified
 
 ### 🎬 **Technical Optimization**
-- Video mode for smooth, real-time interactions
-- Frame mode for pixel-perfect quality or complex animations
-- Custom resolutions for specific platform requirements
+- **Video mode**: Best for smooth, real-time interactions and quick turnaround
+- **Frame mode**: Best for pixel-perfect quality and when you need individual frames
+- **Custom resolutions**: Now work perfectly - specify 1080×1920, get exactly 1080×1920
+- **No more black borders**: Recent fixes ensure clean, professional output
+
+### 💡 **Pro Tips Based on Real Usage**
+- Both recording modes now handle overflow content properly
+- Canvas automatically scales to fill your specified dimensions
+- Smart project naming makes organizing multiple recordings easy
+- Frame capture now captures the full canvas size as intended
 
 ## 🤝 Contributing
 

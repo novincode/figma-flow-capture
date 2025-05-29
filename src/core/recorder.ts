@@ -319,13 +319,17 @@ export class FigmaRecorder {
       // Give the page time to adjust to new viewport
       await this.page.waitForTimeout(1000);
 
-      // Re-detect canvas after viewport change
-      const updatedCanvasInfo = await this.detectCanvas();
-
-      // Hide Figma UI for video recording to focus on canvas only
-      if (options.recordingMode === 'video') {
-        await this.hideFigmaUI();
+      // Hide Figma UI for both recording modes to ensure clean canvas
+      await this.hideFigmaUI();
+      
+      // For custom dimensions, wait a bit longer for the viewport to settle
+      if (options.customWidth && options.customHeight) {
+        await this.page.waitForTimeout(1000);
+        logger.info('Viewport set to custom size, skipping aggressive canvas optimization to preserve Figma rendering');
       }
+
+      // Re-detect canvas after viewport and UI changes
+      const updatedCanvasInfo = await this.detectCanvas();
 
       // Create recording directory with page title
       const outputDir = await this.createRecordingDirectory();
@@ -335,18 +339,18 @@ export class FigmaRecorder {
       let frameCount = 0;
 
       if (options.recordingMode === 'frames') {
-        // Frame-by-frame capture
+        // Frame-by-frame capture - use updated canvas info and enable scaling for custom sizes
         this.frameCapture = new FrameCapture(
           this.page,
           outputDir,
           options.frameRate || 10,
           finalWidth,
           finalHeight,
-          false // scaleToFit disabled for frame capture too
+          !!(options.customWidth && options.customHeight) // Enable scaling for custom dimensions
         );
         
-        // Wait for frame capture to complete before proceeding
-        frameCount = await this.frameCapture.startCapture(canvasInfo, options.duration);
+        // Wait for frame capture to complete before proceeding - use updated canvas info
+        frameCount = await this.frameCapture.startCapture(updatedCanvasInfo, options.duration);
         
         // Ensure frame capture has completely stopped before continuing
         while (this.frameCapture.isActive()) {
@@ -651,6 +655,61 @@ export class FigmaRecorder {
       
     } catch (error) {
       logger.warn('Could not optimize canvas for scaling:', error);
+    }
+  }
+
+  private async optimizeCanvasForCustomSize(targetWidth: number, targetHeight: number): Promise<void> {
+    if (!this.page) {
+      logger.warn('No page available for canvas optimization');
+      return;
+    }
+    
+    try {
+      logger.info(`Optimizing canvas to fill custom size ${targetWidth}x${targetHeight}...`);
+      
+      // Much gentler approach - just ensure canvas can scale properly without breaking Figma
+      await this.page.addStyleTag({
+        content: `
+          /* Hide UI overlays but preserve Figma's canvas structure */
+          [data-testid="toolbar"],
+          .toolbar,
+          .figma-toolbar,
+          .prototype-player__controls,
+          .prototype-player__ui,
+          .view-header,
+          .view-canvas-toolbar {
+            visibility: hidden !important;
+            opacity: 0 !important;
+          }
+          
+          /* Allow canvas to scale within its container */
+          canvas {
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain !important;
+          }
+          
+          /* Ensure canvas container can fill viewport */
+          [data-testid="canvas"],
+          .canvas-container,
+          .canvas-wrapper {
+            width: 100% !important;
+            height: 100% !important;
+          }
+          
+          /* Hide scrollbars but keep functionality */
+          ::-webkit-scrollbar {
+            width: 0px !important;
+            background: transparent !important;
+          }
+        `
+      });
+
+      // Wait for styles to apply but don't break Figma's structure
+      await this.page.waitForTimeout(500);
+      
+    } catch (error) {
+      logger.warn('Could not optimize canvas for custom size:', error);
     }
   }
 }
