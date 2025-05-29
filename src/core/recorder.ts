@@ -66,8 +66,8 @@ export class FigmaRecorder {
   /** Reference counter for shared context management */
   private static browserRefCount = 0;
   
-  /** Directory for persistent browser data */
-  private static persistentDataDir: string = '/tmp/figma-recorder-firefox';
+  /** Directory for persistent browser data (cross-platform compatible) */
+  private static persistentDataDir: string = join(process.cwd(), '.browser-data-firefox');
 
   /**
    * Initializes the Firefox browser with persistent context for optimal performance.

@@ -124,16 +124,16 @@ Your recordings are automatically organized with timestamps and smart naming:
 
 ```
 recordings/
-├── farsilang-1-1748554234311/
+├── yourfigmaproject-1-1748554234311/
 │   └── recording.mp4                    # Clean video recording
-├── farsilang-1-1748554397468/
+├── yourfigmaproject-1-1748554397468/
 │   ├── recording.mp4                    # Final compiled video
 │   └── frames/                          # Individual frames (frame mode)
 │       ├── frame_000000.png
 │       ├── frame_000001.png
 │       ├── frame_000002.png
 │       └── ...
-└── farsilang-1-1748554548861/
+└── yourfigmaproject-1-1748554548861/
     ├── recording.mp4                    # Professional quality output
     └── frames/                          # 60+ frames captured
         ├── frame_000000.png
