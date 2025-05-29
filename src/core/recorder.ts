@@ -541,18 +541,19 @@ export class FigmaRecorder {
           // PNG format - just keep the frames
           outputPath = join(outputDir, 'frames');
         }
-        
-      } else {
+          } else {
         // Video recording using simplified MediaRecorder
         this.videoCapture = new VideoCapture(this.page);
         
         await this.videoCapture.startRecording();
         
-        // Wait for specified duration or until manually stopped
-        if (options.duration && options.duration > 0) {
-          const durationMs = options.duration * 1000;
-          await new Promise(resolve => setTimeout(resolve, durationMs));
-        }
+        // Ensure minimum recording time - critical for data collection
+        const minDuration = 2000; // 2 seconds minimum
+        const requestedDuration = options.duration ? options.duration * 1000 : 0;
+        const actualDuration = Math.max(requestedDuration, minDuration);
+        
+        logger.info(`Recording for ${actualDuration / 1000}s (minimum: ${minDuration / 1000}s)...`);
+        await new Promise(resolve => setTimeout(resolve, actualDuration));
         
         const recordingData = await this.videoCapture.stopRecording();
         const videoFileName = `recording.${options.format}`;

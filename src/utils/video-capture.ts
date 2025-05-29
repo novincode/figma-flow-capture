@@ -38,8 +38,7 @@ export class VideoCapture {
    * @throws {Error} If no canvas element is found
    * @throws {Error} If canvas has no dimensions
    * @throws {Error} If MediaRecorder setup fails
-   */
-  async startRecording(): Promise<void> {
+   */  async startRecording(): Promise<void> {
     if (this.isRecording) {
       throw new Error('Recording already in progress');
     }
@@ -57,53 +56,100 @@ export class VideoCapture {
         }
 
         try {
+          // Check MediaRecorder support first
+          if (!window.MediaRecorder) {
+            reject(new Error('MediaRecorder not supported in this browser'));
+            return;
+          }
+
           // Ensure canvas is visible and has content
           const rect = canvas.getBoundingClientRect();
           if (rect.width === 0 || rect.height === 0) {
             reject(new Error('Canvas has no dimensions'));
             return;
+          }          // Debug canvas state
+          console.log('Canvas found:', {
+            width: canvas.width,
+            height: canvas.height,
+            clientWidth: canvas.clientWidth,
+            clientHeight: canvas.clientHeight,
+            boundingRect: rect
+          });
+
+          // Check if canvas has actual content by sampling a pixel
+          try {
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              const imageData = ctx.getImageData(0, 0, 1, 1);
+              console.log('Canvas content check - first pixel:', imageData.data);
+            }
+          } catch (e) {
+            console.warn('Could not check canvas content:', e);
           }
 
           // Get canvas stream directly - no scaling, no complexity
           const stream = canvas.captureStream(30); // 30 FPS
           
           // Verify stream has tracks
-          if (stream.getVideoTracks().length === 0) {
+          const videoTracks = stream.getVideoTracks();
+          if (videoTracks.length === 0) {
             reject(new Error('No video tracks in canvas stream'));
             return;
           }
 
-          // Simple MediaRecorder setup with best compatibility
+          console.log('Canvas stream created:', {
+            active: stream.active,
+            videoTracks: videoTracks.length,
+            tracks: stream.getTracks().map(t => ({ 
+              kind: t.kind, 
+              enabled: t.enabled, 
+              readyState: t.readyState 
+            }))
+          });          // Simple MediaRecorder setup with best compatibility
           let mediaRecorder: MediaRecorder;
+          let mimeType: string;
+          
+          // Check supported MIME types in order of preference
+          const supportedTypes = [
+            'video/webm;codecs=vp8',
+            'video/webm;codecs=vp9', 
+            'video/webm',
+            'video/mp4;codecs=h264',
+            'video/mp4'
+          ];
+          
+          mimeType = supportedTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
+          
+          if (!mimeType) {
+            reject(new Error('No supported video MIME types found'));
+            return;
+          }
+          
+          console.log('Using MIME type:', mimeType);
+          
           try {
-            // Try WebM first (best Firefox support)
-            if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-              mediaRecorder = new MediaRecorder(stream, { 
-                mimeType: 'video/webm;codecs=vp8',
-                videoBitsPerSecond: 2500000 // 2.5 Mbps
-              });
-            } else if (MediaRecorder.isTypeSupported('video/webm')) {
-              mediaRecorder = new MediaRecorder(stream, { 
-                mimeType: 'video/webm',
-                videoBitsPerSecond: 2500000
-              });
-            } else {
-              // Fallback to browser default
+            mediaRecorder = new MediaRecorder(stream, { 
+              mimeType,
+              videoBitsPerSecond: 2500000 // 2.5 Mbps
+            });
+          } catch (e) {
+            // Fallback without mimeType specification
+            try {
               mediaRecorder = new MediaRecorder(stream, {
                 videoBitsPerSecond: 2500000
               });
+              console.log('Using default MediaRecorder format');
+            } catch (e2) {
+              reject(new Error('Could not create MediaRecorder: ' + e2));
+              return;
             }
-          } catch (e) {
-            reject(new Error('Could not create MediaRecorder: ' + e));
-            return;
-          }
-
-          const chunks: Blob[] = [];
+          }          const chunks: Blob[] = [];
 
           mediaRecorder.ondataavailable = (event) => {
+            console.log('Data available:', event.data.size, 'bytes, type:', event.data.type);
             if (event.data.size > 0) {
               chunks.push(event.data);
-              console.log('Data chunk recorded:', event.data.size, 'bytes');
+              console.log('Data chunk recorded:', event.data.size, 'bytes, total chunks:', chunks.length);
             }
           };
 
@@ -122,23 +168,30 @@ export class VideoCapture {
 
           mediaRecorder.onerror = (event) => {
             console.error('MediaRecorder error:', event);
-            (window as any).recordingError = 'MediaRecorder failed';
+            (window as any).recordingError = 'MediaRecorder failed: ' + (event as any).error;
           };
 
           mediaRecorder.onstart = () => {
-            console.log('MediaRecorder started successfully');
-          };
-
-          // Store recorder for later access
+            console.log('MediaRecorder started successfully, state:', mediaRecorder.state);
+          };          // Store recorder for later access
           (window as any).mediaRecorder = mediaRecorder;
           (window as any).recordingChunks = chunks;
           
-          // Start recording with data collection every 500ms
-          mediaRecorder.start(500);
+          // Start recording with data collection every 100ms for better data capture
+          mediaRecorder.start(100);
           
-          resolve();
+          // Wait a moment to ensure recording actually starts before resolving
+          setTimeout(() => {
+            if (mediaRecorder.state === 'recording') {
+              console.log('MediaRecorder confirmed recording, state:', mediaRecorder.state);
+              resolve();
+            } else {
+              reject(new Error('MediaRecorder failed to start recording, state: ' + mediaRecorder.state));
+            }
+          }, 500);
 
         } catch (error) {
+          console.error('Video recording setup error:', error);
           reject(error);
         }
       });
@@ -220,15 +273,21 @@ export class VideoCapture {
           } catch (error) {
             reject(error);
           }
-        };
-
-        // Stop the recorder
+        };        // Stop the recorder
         if (mediaRecorder.state === 'recording') {
+          console.log('Requesting final data and stopping recorder...');
           mediaRecorder.requestData(); // Get any remaining data
           setTimeout(() => {
-            mediaRecorder.stop();
-          }, 100);
+            if (mediaRecorder.state === 'recording') {
+              mediaRecorder.stop();
+            }
+          }, 200); // Increased timeout to ensure data is collected
+        } else if (mediaRecorder.state === 'paused') {
+          console.log('Resuming and stopping recorder...');
+          mediaRecorder.resume();
+          setTimeout(() => mediaRecorder.stop(), 100);
         } else {
+          console.log('Recorder already stopped, state:', mediaRecorder.state);
           mediaRecorder.stop();
         }
       });
