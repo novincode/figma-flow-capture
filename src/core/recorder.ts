@@ -66,7 +66,7 @@ export class FigmaRecorder {
           'Cache-Control': 'max-age=3600'
         },
         // Shorter launch timeout is fine (only affects startup time)
-        timeout: 30000,
+        timeout: 90000,
         slowMo: 50 // Reduced delay for faster recording
       });
 
@@ -116,10 +116,10 @@ export class FigmaRecorder {
     logger.info('⏳ Loading page... (this may take a moment)');
     
     try {
-      // Navigate to Figma with generous timeout
+      // Navigate to Figma with reasonable timeout
       await this.page.goto(figmaUrl, { 
-        waitUntil: 'networkidle',
-        timeout: 60000 
+        waitUntil: 'domcontentloaded', // Less strict than networkidle
+        timeout: 90000 // Reduced from 60s to 30s
       });
 
       // Wait for page to load completely
@@ -299,20 +299,21 @@ export class FigmaRecorder {
         logger.info(`Custom size: ${finalWidth}x${finalHeight}`);
       }
 
-      // For video recording, set viewport to exact target size for precise recording
-      if (options.recordingMode === 'video') {
+      // Set viewport to exact target size for both modes when custom dimensions are specified
+      if (options.customWidth && options.customHeight) {
+        // When custom size is specified, use exact dimensions for both video and frame modes
         await this.page.setViewportSize({
           width: finalWidth,
           height: finalHeight
         });
-        logger.info(`Video recording: Viewport set to exact size ${finalWidth}x${finalHeight}`);
+        logger.info(`${options.recordingMode} recording: Viewport set to exact custom size ${finalWidth}x${finalHeight}`);
       } else {
-        // For frame recording, use larger viewport to accommodate UI
+        // For auto-sizing, use slightly larger viewport to accommodate UI
         await this.page.setViewportSize({
           width: Math.max(finalWidth, 1400),
           height: Math.max(finalHeight, 900)
         });
-        logger.info(`Frame recording: Viewport set to ${Math.max(finalWidth, 1400)}x${Math.max(finalHeight, 900)}`);
+        logger.info(`${options.recordingMode} recording: Viewport set to ${Math.max(finalWidth, 1400)}x${Math.max(finalHeight, 900)} (with UI space)`);
       }
       
       // Give the page time to adjust to new viewport
