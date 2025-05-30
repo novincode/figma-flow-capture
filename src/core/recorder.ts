@@ -591,14 +591,68 @@ export class FigmaRecorder {
           recordingData = await this.videoCapture.stopRecording();
         }
         
-        // Ensure format is specified, default to 'mp4' if not provided
+        // Handle format conversion for video recordings
         const outputFormat = options.format || 'mp4';
-        const videoFileName = `recording.${outputFormat}`;
-        outputPath = join(outputDir, videoFileName);
-        
-        // Save video data to file
         const fs = await import('fs/promises');
-        await fs.writeFile(outputPath, recordingData);
+        
+        if (outputFormat === 'gif') {
+          // For GIF output, we need to convert the WebM to GIF
+          const tempWebmPath = join(outputDir, 'temp_recording.webm');
+          const gifPath = join(outputDir, 'recording.gif');
+          
+          // Save WebM data to temporary file
+          await fs.writeFile(tempWebmPath, recordingData);
+          
+          logger.info('Converting WebM to GIF...');
+          
+          try {
+            const { convertWebMToGif } = await import('../utils/ffmpeg-converter.js');
+            await convertWebMToGif(tempWebmPath, gifPath, 'high');
+            
+            // Clean up temporary WebM file
+            await fs.unlink(tempWebmPath);
+            
+            outputPath = gifPath;
+            logger.success('✅ GIF conversion completed');
+          } catch (error) {
+            logger.error('GIF conversion failed:', error);
+            // Fall back to saving as WebM if conversion fails
+            outputPath = join(outputDir, 'recording.webm');
+            await fs.writeFile(outputPath, recordingData);
+            logger.warn('Saved as WebM due to GIF conversion error');
+          }
+        } else if (outputFormat === 'mp4') {
+          // For MP4, we need to convert WebM to MP4 using FFmpeg
+          const tempWebmPath = join(outputDir, 'temp_recording.webm');
+          const mp4Path = join(outputDir, 'recording.mp4');
+          
+          // Save WebM data to temporary file
+          await fs.writeFile(tempWebmPath, recordingData);
+          
+          logger.info('Converting WebM to MP4...');
+          
+          try {
+            const { convertWebMToMp4 } = await import('../utils/ffmpeg-converter.js');
+            await convertWebMToMp4(tempWebmPath, mp4Path);
+            
+            // Clean up temporary WebM file
+            await fs.unlink(tempWebmPath);
+            
+            outputPath = mp4Path;
+            logger.success('✅ MP4 conversion completed');
+          } catch (error) {
+            logger.error('MP4 conversion failed:', error);
+            // Fall back to saving as WebM if conversion fails
+            outputPath = join(outputDir, 'recording.webm');
+            await fs.writeFile(outputPath, recordingData);
+            logger.warn('Saved as WebM due to MP4 conversion error');
+          }
+        } else {
+          // For WebM or other formats, save directly
+          const videoFileName = `recording.${outputFormat}`;
+          outputPath = join(outputDir, videoFileName);
+          await fs.writeFile(outputPath, recordingData);
+        }
       }
 
       const duration = (Date.now() - startTime) / 1000;

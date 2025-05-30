@@ -20,7 +20,7 @@ function parseArgs(): RecordingOptions | null {
     console.log('  --duration <seconds>  Recording duration');
     console.log('  --width <pixels>      Custom viewport width');
     console.log('  --height <pixels>     Custom viewport height');
-    console.log('  --format <format>     Output format (mp4|webm|png) [default: mp4]');
+    console.log('  --format <format>     Output format (mp4|webm|gif|png) [default: mp4]');
     console.log('  --frame-rate <fps>    Frame rate [default: 30]');
     console.log('  --wait-for-canvas     Wait for canvas to load (true|false) [default: true]');
     console.log('  --stop-mode <mode>    Stop mode (timer|manual) [default: timer]');
@@ -51,7 +51,7 @@ function parseArgs(): RecordingOptions | null {
         options.customHeight = parseInt(value);
         break;
       case '--format':
-        options.format = value as 'mp4' | 'webm' | 'png';
+        options.format = value as 'mp4' | 'webm' | 'gif' | 'png';
         break;
       case '--frame-rate':
         options.frameRate = parseInt(value);
@@ -113,7 +113,7 @@ async function main() {
     console.log('  --duration <seconds>  Recording duration');
     console.log('  --width <pixels>      Custom viewport width');
     console.log('  --height <pixels>     Custom viewport height');
-    console.log('  --format <format>     Output format (mp4|webm|png) [default: mp4]');
+    console.log('  --format <format>     Output format (mp4|webm|gif|png) [default: mp4]');
     console.log('  --frame-rate <fps>    Frame rate [default: 30]');
     console.log('  --wait-for-canvas     Wait for canvas to load (true|false) [default: true]');
     console.log('  --stop-mode <mode>    Stop mode (timer|manual) [default: timer]');

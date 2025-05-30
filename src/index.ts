@@ -177,15 +177,25 @@ async function main() {
     choices: modeResponse.recordingMode === 'frames' 
       ? [
           { title: 'MP4 - Best compatibility', value: 'mp4' },
-          { title: 'WebM - Smaller file size', value: 'webm' }
+          { title: 'WebM - Smaller file size', value: 'webm' },
+          { title: 'GIF - Animated image format', value: 'gif' },
+          { title: 'PNG - Frame sequence only', value: 'png' }
         ]
       : [
+          { title: 'MP4 - Best compatibility', value: 'mp4' },
           { title: 'WebM - Default browser format', value: 'webm' },
-          { title: 'MP4 - Better compatibility', value: 'mp4' }
+          { title: 'GIF - Animated image format (requires FFmpeg)', value: 'gif', disabled: !ffmpegAvailable }
         ]
   });
 
   if (!formatResponse.format) {
+    process.exit(1);
+  }
+
+  // Check FFmpeg requirement for GIF in video mode
+  if (formatResponse.format === 'gif' && modeResponse.recordingMode === 'video' && !ffmpegAvailable) {
+    logger.error('GIF format requires FFmpeg for video recording mode.');
+    logger.info('Please install FFmpeg or choose a different format.');
     process.exit(1);
   }
 

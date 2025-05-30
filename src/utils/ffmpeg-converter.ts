@@ -288,3 +288,167 @@ export async function getVideoInfo(videoPath: string): Promise<{ duration: numbe
     return null;
   }
 }
+
+/**
+ * Converts a WebM video file to GIF format using FFmpeg.
+ * Optimized for high-quality GIF output with proper palette generation.
+ * 
+ * @param inputPath - Path to the input WebM file
+ * @param outputPath - Path for the output GIF file
+ * @param quality - Quality preset ('high', 'medium', 'low')
+ * @returns Promise that resolves to true if conversion succeeded
+ * @throws {Error} If FFmpeg is not available or conversion fails
+ */
+export async function convertWebMToGif(inputPath: string, outputPath: string, quality: 'high' | 'medium' | 'low' = 'high'): Promise<boolean> {
+  // Check if FFmpeg is available
+  const ffmpegAvailable = await checkFFmpegAvailability();
+  if (!ffmpegAvailable) {
+    throw new Error('FFmpeg is not available. Please install FFmpeg to convert WebM to GIF.');
+  }
+
+  // Check if input file exists
+  if (!existsSync(inputPath)) {
+    throw new Error(`Input WebM file not found: ${inputPath}`);
+  }
+
+  logger.info(`Converting WebM to GIF: ${inputPath} -> ${outputPath}`);
+
+  try {
+    // Use a two-pass approach for better GIF quality
+    // First generate the palette, then create the GIF
+    const tempPalettePath = outputPath.replace('.gif', '_palette.png');
+    
+    // Step 1: Generate palette
+    let paletteCmd = `ffmpeg -y -i "${inputPath}" -vf "fps=15`;
+    
+    // Add quality settings for palette generation
+    switch (quality) {
+      case 'high':
+        paletteCmd += `,palettegen=max_colors=256:stats_mode=diff"`;
+        break;
+      case 'medium':
+        paletteCmd += `,palettegen=max_colors=128:stats_mode=diff"`;
+        break;
+      case 'low':
+        paletteCmd += `,palettegen=max_colors=64:stats_mode=diff"`;
+        break;
+    }
+    
+    paletteCmd += ` "${tempPalettePath}"`;
+    
+    logger.info(`Generating palette: ${paletteCmd}`);
+    await execAsync(paletteCmd);
+    
+    // Step 2: Create GIF using the palette
+    let gifCmd = `ffmpeg -y -i "${inputPath}" -i "${tempPalettePath}" -lavfi "fps=15`;
+    
+    // Add quality settings for final GIF
+    switch (quality) {
+      case 'high':
+        gifCmd += ` [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"`;
+        break;
+      case 'medium':
+        gifCmd += ` [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle"`;
+        break;
+      case 'low':
+        gifCmd += ` [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=1:diff_mode=rectangle"`;
+        break;
+    }
+    
+    gifCmd += ` "${outputPath}"`;
+
+    logger.info(`Creating GIF: ${gifCmd}`);
+
+    // Execute GIF creation command
+    const { stdout, stderr } = await execAsync(gifCmd);
+    
+    if (stderr && !stderr.includes('frame=')) {
+      logger.warn('FFmpeg warnings:', stderr);
+    }
+
+    // Clean up temporary palette file
+    try {
+      if (existsSync(tempPalettePath)) {
+        const fs = await import('fs/promises');
+        await fs.unlink(tempPalettePath);
+      }
+    } catch (error) {
+      logger.warn('Could not clean up temporary palette file:', error);
+    }
+
+    // Check if output file was created
+    if (existsSync(outputPath)) {
+      logger.success(`✅ WebM to GIF conversion completed: ${outputPath}`);
+      return true;
+    } else {
+      throw new Error('Output GIF file was not created');
+    }
+
+  } catch (error) {
+    logger.error('FFmpeg WebM to GIF conversion failed:', error);
+    if (error instanceof Error && error.message) {
+      logger.error('Error details:', error.message);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Converts a WebM video file to MP4 format using FFmpeg.
+ * Uses H.264 encoding with QuickTime-compatible settings.
+ * 
+ * @param inputPath - Path to the input WebM file
+ * @param outputPath - Path for the output MP4 file
+ * @returns Promise that resolves to true if conversion succeeded
+ * @throws {Error} If FFmpeg is not available or conversion fails
+ */
+export async function convertWebMToMp4(inputPath: string, outputPath: string): Promise<boolean> {
+  // Check if FFmpeg is available
+  const ffmpegAvailable = await checkFFmpegAvailability();
+  if (!ffmpegAvailable) {
+    throw new Error('FFmpeg is not available. Please install FFmpeg to convert WebM to MP4.');
+  }
+
+  // Check if input file exists
+  if (!existsSync(inputPath)) {
+    throw new Error(`Input WebM file not found: ${inputPath}`);
+  }
+
+  logger.info(`Converting WebM to MP4: ${inputPath} -> ${outputPath}`);
+
+  try {
+    // Build FFmpeg command for WebM to MP4 conversion with QuickTime compatibility
+    let ffmpegCmd = `ffmpeg -y -i "${inputPath}"`;
+    
+    // Use H.264 with QuickTime-compatible settings
+    ffmpegCmd += ` -c:v libx264 -pix_fmt yuv420p`;
+    ffmpegCmd += ` -movflags +faststart -profile:v baseline -level 3.0`;
+    ffmpegCmd += ` -crf 18 -preset medium`;
+    
+    ffmpegCmd += ` "${outputPath}"`;
+
+    logger.info(`Running FFmpeg command: ${ffmpegCmd}`);
+
+    // Execute FFmpeg command
+    const { stdout, stderr } = await execAsync(ffmpegCmd);
+    
+    if (stderr && !stderr.includes('frame=')) {
+      logger.warn('FFmpeg warnings:', stderr);
+    }
+
+    // Check if output file was created
+    if (existsSync(outputPath)) {
+      logger.success(`✅ WebM to MP4 conversion completed: ${outputPath}`);
+      return true;
+    } else {
+      throw new Error('Output MP4 file was not created');
+    }
+
+  } catch (error) {
+    logger.error('FFmpeg WebM to MP4 conversion failed:', error);
+    if (error instanceof Error && error.message) {
+      logger.error('Error details:', error.message);
+    }
+    throw error;
+  }
+}
