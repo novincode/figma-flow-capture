@@ -21,6 +21,7 @@ interface RecordingSession {
   recorder: FigmaRecorder;
   status: 'preparing' | 'recording' | 'processing' | 'completed' | 'failed';
   startTime: Date;
+  endTime?: Date;
   options: RecordingOptions;
   outputPath?: string;
   error?: string;
@@ -187,6 +188,42 @@ app.post('/recording/:sessionId/stop', async (req, res) => {
   }
 });
 
+// Stop a recording session (without deleting)
+app.post('/session/:sessionId/stop', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = activeSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: 'Recording session not found' });
+    }
+    
+    if (session.status !== 'recording') {
+      return res.status(400).json({ error: 'Session is not currently recording' });
+    }
+    
+    logger.info(`Stopping recording session ${sessionId}`);
+    
+    // Stop the recorder
+    const result = await session.recorder.stopRecording();
+    session.status = 'completed';
+    session.endTime = new Date();
+    
+    res.json({ 
+      message: 'Session stopped successfully',
+      sessionId,
+      result
+    });
+    
+  } catch (error) {
+    logger.error('Error stopping session:', error);
+    res.status(500).json({ 
+      error: 'Failed to stop session',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Get recording status
 app.get('/recording/:sessionId/status', (req, res) => {
   try {
@@ -304,6 +341,51 @@ app.delete('/recording/:name', async (req, res) => {
   }
 });
 
+// Clear/delete a recording session
+app.delete('/session/:sessionId', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = activeSessions.get(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({ error: 'Recording session not found' });
+    }
+    
+    logger.info(`Clearing recording session ${sessionId}`);
+    
+    // Stop the recorder if it's still running
+    if (session.status === 'recording' || session.status === 'preparing') {
+      try {
+        await session.recorder.stopRecording();
+      } catch (error) {
+        logger.warn(`Failed to stop recorder while clearing session ${sessionId}:`, error);
+      }
+    }
+    
+    // Cleanup the recorder
+    try {
+      await session.recorder.cleanup();
+    } catch (error) {
+      logger.warn(`Failed to cleanup recorder while clearing session ${sessionId}:`, error);
+    }
+    
+    // Remove from active sessions
+    activeSessions.delete(sessionId);
+    
+    res.json({ 
+      message: 'Session cleared successfully',
+      sessionId
+    });
+    
+  } catch (error) {
+    logger.error('Error clearing session:', error);
+    res.status(500).json({ 
+      error: 'Failed to clear session',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Get server info
 app.get('/info', (req, res) => {
   res.json({
@@ -318,6 +400,30 @@ app.get('/info', (req, res) => {
     activeSessions: activeSessions.size,
     timestamp: new Date().toISOString()
   });
+});
+
+// Get active sessions
+app.get('/sessions/active', (req, res) => {
+  try {
+    const sessions = Array.from(activeSessions.values()).map(session => ({
+      sessionId: session.id,
+      name: `Recording ${session.id.substring(0, 8)}`, // Generate a display name
+      startTime: session.startTime.toISOString(),
+      recordingMode: session.options.recordingMode || 'video',
+      status: session.status,
+      figmaUrl: session.options.figmaUrl,
+      duration: session.options.duration
+    }));
+    
+    res.json({ sessions });
+    
+  } catch (error) {
+    logger.error('Error getting active sessions:', error);
+    res.status(500).json({ 
+      error: 'Failed to get active sessions',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // Recording process handler
