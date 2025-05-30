@@ -19,6 +19,7 @@ The ultimate tool for capturing smooth, high-quality videos of your Figma protot
 
 ## 🚀 Quick Start
 
+### 🎬 CLI Recording (Interactive)
 ```bash
 # Install dependencies
 pnpm install
@@ -30,7 +31,16 @@ pnpm run install-browsers
 pnpm run record
 ```
 
-That's it! The interactive CLI will guide you through the rest.
+### 🔌 API Server (Programmatic)
+```bash
+# Start the API server
+pnpm run server
+
+# Server runs on http://localhost:8787
+# Full API documentation: API.md
+```
+
+That's it! The interactive CLI will guide you through the rest, or use the API for programmatic control.
 
 ## 🎥 Recording Modes
 
@@ -321,7 +331,27 @@ We welcome contributions! Feel free to:
 
 ## 📄 License
 
-This project is licensed under the **ISC License**.
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+
+- You may use, modify, and distribute it freely.
+- **If you run this as a service (SaaS, cloud, or web), you must also open source your modifications.**
+- Commercial use of the name, logo, or branding requires permission.
+
+See [LICENSE](./LICENSE) for full terms.
+
+## 🤝 Fair Use and Licensing
+
+By using this project, you agree to:
+- Keep this project open source if you host it as a service
+- Credit the original authors (see LICENSE)
+- Not resell or rebrand as a closed-source paid tool
+- For commercial licensing or use of the branding, contact the author
+
+## 🔌 API Integration
+
+Want to automate or build on top of Figma Flow Capture?
+
+See the full [API Documentation](./API.md) for all endpoints, usage examples, and integration tips.
 
 ---
 

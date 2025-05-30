@@ -7,10 +7,10 @@ The Figma Flow Capture API Server is a RESTful API that enables programmatic rec
 ## Base URL
 
 ```
-http://localhost:3001
+http://localhost:8787
 ```
 
-> **Note:** The default port is 3001, but can be changed via the `PORT` environment variable.
+> **Note:** The default port is 8787, but can be changed via the `PORT` environment variable.
 
 ## API Endpoints
 
@@ -260,7 +260,7 @@ Get detailed server information.
 ### Starting a Recording
 
 ```bash
-curl -X POST http://localhost:3001/recording/start \
+curl -X POST http://localhost:8787/recording/start \
   -H "Content-Type: application/json" \
   -d '{
     "figmaUrl": "https://www.figma.com/proto/ABC123/My-Prototype",
@@ -274,19 +274,19 @@ curl -X POST http://localhost:3001/recording/start \
 ### Checking Recording Status
 
 ```bash
-curl http://localhost:3001/recording/550e8400-e29b-41d4-a716-446655440000/status
+curl http://localhost:8787/recording/550e8400-e29b-41d4-a716-446655440000/status
 ```
 
 ### Stopping a Recording
 
 ```bash
-curl -X POST http://localhost:3001/recording/550e8400-e29b-41d4-a716-446655440000/stop
+curl -X POST http://localhost:8787/recording/550e8400-e29b-41d4-a716-446655440000/stop
 ```
 
 ### Listing All Recordings
 
 ```bash
-curl http://localhost:3001/recordings
+curl http://localhost:8787/recordings
 ```
 
 ---
@@ -359,7 +359,7 @@ PORT=8080 npm run server
 
 ### Environment Variables
 
-- `PORT` - Server port (default: 3001)
+- `PORT` - Server port (default: 8787)
 - `NODE_ENV` - Environment mode (development/production)
 
 ### Dependencies
