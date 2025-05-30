@@ -80,7 +80,9 @@ Start a new recording session.
   "height": 1080,
   "fps": 30,
   "quality": "high",
-  "captureFrames": true
+  "captureFrames": true,
+  "stopMode": "manual",
+  "duration": 30
 }
 ```
 
@@ -94,6 +96,8 @@ Start a new recording session.
 - `fps` (number) - Frames per second (default: 30)
 - `quality` (string) - Recording quality: "low", "medium", "high" (default: "high")
 - `captureFrames` (boolean) - Whether to save individual frames (default: false)
+- `stopMode` (string) - Recording stop mode: "timer" or "manual" (default: "timer")
+- `duration` (number) - Recording duration in seconds (default: 15, only used when stopMode is "timer")
 
 **Response:**
 ```json
@@ -114,7 +118,7 @@ Start a new recording session.
 
 #### `POST /recording/:sessionId/stop`
 
-Stop an active recording session.
+Stop an active recording session manually.
 
 **Parameters:**
 - `sessionId` (string) - The session ID returned from `/recording/start`
@@ -127,6 +131,11 @@ Stop an active recording session.
   "status": "processing"
 }
 ```
+
+**Notes:**
+- This endpoint is primarily used for recordings with `stopMode: "manual"`
+- For timer-based recordings, the recording will stop automatically after the specified duration
+- Manual recordings will continue indefinitely until this endpoint is called
 
 **Status Codes:**
 - `200` - Recording stopped successfully
@@ -257,7 +266,7 @@ Get detailed server information.
 
 ## Usage Examples
 
-### Starting a Recording
+### Starting a Recording (Timer Mode)
 
 ```bash
 curl -X POST http://localhost:8787/recording/start \
@@ -267,7 +276,24 @@ curl -X POST http://localhost:8787/recording/start \
     "name": "user-flow-demo",
     "width": 1920,
     "height": 1080,
-    "captureFrames": true
+    "captureFrames": true,
+    "stopMode": "timer",
+    "duration": 30
+  }'
+```
+
+### Starting a Manual Recording
+
+```bash
+curl -X POST http://localhost:8787/recording/start \
+  -H "Content-Type: application/json" \
+  -d '{
+    "figmaUrl": "https://www.figma.com/proto/ABC123/My-Prototype",
+    "name": "manual-recording",
+    "width": 1920,
+    "height": 1080,
+    "captureFrames": true,
+    "stopMode": "manual"
   }'
 ```
 
@@ -312,14 +338,30 @@ All endpoints return structured error responses:
 
 ## Recording Process Flow
 
-1. **Start Recording** - `POST /recording/start`
+### Timer Mode (Default)
+
+1. **Start Recording** - `POST /recording/start` with `stopMode: "timer"` and `duration`
    - Returns session ID and status "preparing"
+   - Recording will automatically stop after specified duration
 
 2. **Monitor Progress** - `GET /recording/:sessionId/status`
    - Status progresses: `preparing` → `recording` → `processing` → `completed`
 
-3. **Stop Recording** (optional) - `POST /recording/:sessionId/stop`
-   - Can be stopped manually or will complete automatically
+3. **Access Files** - `GET /recordings`
+   - List and access completed recordings
+
+### Manual Mode
+
+1. **Start Recording** - `POST /recording/start` with `stopMode: "manual"`
+   - Returns session ID and status "preparing"
+   - Recording will continue indefinitely until manually stopped
+
+2. **Monitor Progress** - `GET /recording/:sessionId/status`
+   - Status shows: `preparing` → `recording` (continues until stopped)
+
+3. **Stop Recording** - `POST /recording/:sessionId/stop`
+   - Manually stop the recording when desired
+   - Status progresses: `recording` → `processing` → `completed`
 
 4. **Access Files** - `GET /recordings`
    - List and access completed recordings
@@ -376,6 +418,7 @@ PORT=8080 npm run server
 - Concurrent recordings are supported but resource-intensive
 - Each recording session consumes significant CPU and memory
 - Monitor system resources when running multiple recordings
+- **Manual mode recordings** can run indefinitely - ensure proper monitoring and cleanup
 
 ---
 
@@ -385,7 +428,8 @@ PORT=8080 npm run server
 - Consider implementing API keys for production use
 - Validate Figma URLs to prevent SSRF attacks
 - Run behind reverse proxy with proper security headers
-- Limit recording duration to prevent resource exhaustion
+- **Limit recording duration** or implement timeouts for manual mode to prevent resource exhaustion
+- Monitor long-running manual recordings to prevent system overload
 
 ---
 
