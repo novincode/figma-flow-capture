@@ -173,13 +173,17 @@ export async function convertFramesToVideo(options: FFmpegOptions): Promise<bool
     
     // Add format-specific encoding options
     if (format === 'mp4') {
+      // Use H.264 with QuickTime-compatible settings
       ffmpegCmd += ` -c:v libx264 -pix_fmt yuv420p`;
+      
+      // Add QuickTime compatibility flags
+      ffmpegCmd += ` -movflags +faststart -profile:v baseline -level 3.0`;
       
       // Add options to handle missing frames and ensure proper duration
       // Use modern fps_mode if supported, fallback to vsync for older versions
       ffmpegCmd += ` -fps_mode cfr -fflags +genpts`;
       
-      // Quality settings for MP4
+      // Quality settings for MP4 with QuickTime optimization
       switch (quality) {
         case 'high':
           ffmpegCmd += ` -crf 18 -preset slower`;
@@ -209,6 +213,28 @@ export async function convertFramesToVideo(options: FFmpegOptions): Promise<bool
           ffmpegCmd += ` -crf 30 -b:v 500k`;
           break;
       }
+    } else if (format === 'gif') {
+      // Simplified GIF encoding with good quality
+      let gifFilter = `fps=${Math.min(frameRate, 15)}`;
+      
+      if (targetWidth && targetHeight) {
+        gifFilter += `,scale=${targetWidth}:${targetHeight}:flags=lanczos`;
+      }
+      
+      // Quality settings for GIF
+      switch (quality) {
+        case 'high':
+          gifFilter += `,split[s0][s1];[s0]palettegen=max_colors=256[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5`;
+          break;
+        case 'medium':
+          gifFilter += `,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3`;
+          break;
+        case 'low':
+          gifFilter += `,split[s0][s1];[s0]palettegen=max_colors=64[p];[s1][p]paletteuse=dither=bayer:bayer_scale=1`;
+          break;
+      }
+      
+      ffmpegCmd += ` -vf "${gifFilter}"`;
     }
 
     // Add output path

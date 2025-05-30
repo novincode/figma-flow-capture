@@ -15,8 +15,8 @@ export interface RecordingOptions {
   /** Frame rate for frame capture mode (default: 10 fps) */
   frameRate?: number;
   
-  /** Output format: 'mp4' or 'webm' for video, 'png' for frames */
-  format: 'mp4' | 'webm' | 'png';
+  /** Output format: 'mp4', 'webm', or 'gif' for video, 'png' for frames */
+  format: 'mp4' | 'webm' | 'gif' | 'png';
   
   /** Custom output width in pixels (overrides preset resolutions) */
   customWidth?: number;
