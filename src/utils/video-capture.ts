@@ -164,12 +164,11 @@ export class VideoCapture {
             const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
             console.log('Created recording blob:', blob.size, 'bytes');
             (window as any).recordingBlob = blob;
-          };
-
-          mediaRecorder.onerror = (event) => {
-            console.error('MediaRecorder error:', event);
-            (window as any).recordingError = 'MediaRecorder failed: ' + (event as any).error;
-          };
+          };        mediaRecorder.onerror = (event) => {
+          console.error('MediaRecorder error:', event);
+          const errorMsg = (event as any).error?.message || 'Unknown MediaRecorder error';
+          (window as any).recordingError = 'MediaRecorder failed: ' + errorMsg;
+        };
 
           mediaRecorder.onstart = () => {
             console.log('MediaRecorder started successfully, state:', mediaRecorder.state);
@@ -276,19 +275,96 @@ export class VideoCapture {
         };        // Stop the recorder
         if (mediaRecorder.state === 'recording') {
           console.log('Requesting final data and stopping recorder...');
-          mediaRecorder.requestData(); // Get any remaining data
-          setTimeout(() => {
-            if (mediaRecorder.state === 'recording') {
-              mediaRecorder.stop();
+          
+          // Set up timeout to prevent hanging
+          const stopTimeout = setTimeout(() => {
+            console.warn('Stop timeout reached, forcing recorder cleanup');
+            const chunks = (window as any).recordingChunks;
+            if (chunks && chunks.length > 0) {
+              const finalBlob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
+              (window as any).recordingBlob = finalBlob;
             }
-          }, 200); // Increased timeout to ensure data is collected
+            resolve(new Uint8Array(0)); // Return empty data if timeout
+          }, 5000); // 5 second timeout
+          
+          mediaRecorder.onstop = async () => {
+            clearTimeout(stopTimeout);
+            try {
+              // Wait a moment for blob to be ready
+              await new Promise(resolve => setTimeout(resolve, 200));
+              
+              const blob = (window as any).recordingBlob;
+              if (blob && blob.size > 0) {
+                console.log('Converting blob to array buffer, size:', blob.size);
+                const arrayBuffer = await blob.arrayBuffer();
+                resolve(new Uint8Array(arrayBuffer));
+              } else {
+                // Try to create blob from chunks directly
+                const chunks = (window as any).recordingChunks;
+                if (chunks && chunks.length > 0) {
+                  const finalBlob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
+                  if (finalBlob.size > 0) {
+                    const arrayBuffer = await finalBlob.arrayBuffer();
+                    resolve(new Uint8Array(arrayBuffer));
+                  } else {
+                    reject(new Error('No recording data found - chunks were empty'));
+                  }
+                } else {
+                  reject(new Error('No recording data found - no chunks collected'));
+                }
+              }
+            } catch (error) {
+              clearTimeout(stopTimeout);
+              reject(error);
+            }
+          };
+          
+          // Request any remaining data first
+          try {
+            mediaRecorder.requestData();
+          } catch (e) {
+            console.warn('requestData failed:', e);
+          }
+          
+          // Stop after a brief delay
+          setTimeout(() => {
+            try {
+              if (mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+              }
+            } catch (e) {
+              console.error('Error stopping recorder:', e);
+              clearTimeout(stopTimeout);
+              reject(new Error('Failed to stop recorder: ' + e));
+            }
+          }, 300); // Increased delay to ensure data is collected
+          
         } else if (mediaRecorder.state === 'paused') {
           console.log('Resuming and stopping recorder...');
           mediaRecorder.resume();
-          setTimeout(() => mediaRecorder.stop(), 100);
+          setTimeout(() => {
+            try {
+              mediaRecorder.stop();
+            } catch (e) {
+              reject(new Error('Failed to stop paused recorder: ' + e));
+            }
+          }, 200);
         } else {
           console.log('Recorder already stopped, state:', mediaRecorder.state);
-          mediaRecorder.stop();
+          try {
+            mediaRecorder.stop();
+          } catch (e) {
+            console.warn('Error stopping already stopped recorder:', e);
+            // Try to get existing data
+            const blob = (window as any).recordingBlob;
+            if (blob && blob.size > 0) {
+              blob.arrayBuffer().then((arrayBuffer: ArrayBuffer) => {
+                resolve(new Uint8Array(arrayBuffer));
+              }).catch(reject);
+            } else {
+              reject(new Error('No recording data available'));
+            }
+          }
         }
       });
     });

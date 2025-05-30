@@ -512,19 +512,20 @@ export class FigmaRecorder {
         }
         
         // Convert frames to video if format is mp4 or webm
-        if (options.format === 'mp4' || options.format === 'webm') {
+        const outputFormat = options.format || 'mp4';
+        if (outputFormat === 'mp4' || outputFormat === 'webm') {
           const framesDir = join(outputDir, 'frames');
-          const videoFileName = `recording.${options.format}`;
+          const videoFileName = `recording.${outputFormat}`;
           const videoPath = join(outputDir, videoFileName);
           
-          logger.info(`Converting ${frameCount} frames to ${options.format.toUpperCase()}...`);
+          logger.info(`Converting ${frameCount} frames to ${outputFormat.toUpperCase()}...`);
           
           try {
             await convertFramesToVideo({
               inputDir: framesDir,
               outputPath: videoPath,
               frameRate: options.frameRate || 30,
-              format: options.format,
+              format: outputFormat,
               quality: 'high'
               // Removed scaling parameters - frame capture handles this natively
             });
@@ -547,16 +548,52 @@ export class FigmaRecorder {
         
         await this.videoCapture.startRecording();
         
-        // Ensure minimum recording time - critical for data collection
-        const minDuration = 2000; // 2 seconds minimum
-        const requestedDuration = options.duration ? options.duration * 1000 : 0;
-        const actualDuration = Math.max(requestedDuration, minDuration);
+        let recordingData: Uint8Array;
         
-        logger.info(`Recording for ${actualDuration / 1000}s (minimum: ${minDuration / 1000}s)...`);
-        await new Promise(resolve => setTimeout(resolve, actualDuration));
+        // Handle different stop modes
+        if (options.stopMode === 'manual') {
+          // Manual mode: wait indefinitely until stopRecording is called externally
+          logger.info('Recording started in manual mode. Use stopRecording() or Ctrl+C to stop...');
+          
+          // Keep recording until stopped externally
+          // This will be interrupted by stopRecording() or cleanup()
+          await new Promise<void>((resolve) => {
+            // Store the resolve function so stopRecording can call it
+            (this as any)._manualStopResolver = resolve;
+            
+            // Also handle process interruption for CLI
+            const handleInterrupt = () => {
+              logger.info('Manual recording stopped by interruption');
+              resolve();
+            };
+            
+            process.once('SIGINT', handleInterrupt);
+            process.once('SIGTERM', handleInterrupt);
+          });
+          
+          // After manual stop, get the recording data if videoCapture still exists
+          if (this.videoCapture && this.videoCapture.isActive()) {
+            recordingData = await this.videoCapture.stopRecording();
+          } else {
+            // VideoCapture was already stopped, get the stored data
+            recordingData = (this as any)._recordingData || new Uint8Array(0);
+          }
+        } else {
+          // Timer mode: use duration or default
+          const defaultDuration = 15000; // 15 seconds default for API calls
+          const minDuration = 2000; // 2 seconds minimum
+          const requestedDuration = options.duration ? options.duration * 1000 : defaultDuration;
+          const actualDuration = Math.max(requestedDuration, minDuration);
+          
+          logger.info(`Recording for ${actualDuration / 1000}s (default: ${defaultDuration / 1000}s, minimum: ${minDuration / 1000}s)...`);
+          await new Promise(resolve => setTimeout(resolve, actualDuration));
+          
+          recordingData = await this.videoCapture.stopRecording();
+        }
         
-        const recordingData = await this.videoCapture.stopRecording();
-        const videoFileName = `recording.${options.format}`;
+        // Ensure format is specified, default to 'mp4' if not provided
+        const outputFormat = options.format || 'mp4';
+        const videoFileName = `recording.${outputFormat}`;
         outputPath = join(outputDir, videoFileName);
         
         // Save video data to file
@@ -624,9 +661,18 @@ export class FigmaRecorder {
       this.frameCapture = null;
     }
     
+    // For video capture, store the data before setting to null
     if (this.videoCapture && this.videoCapture.isActive()) {
-      await this.videoCapture.stopRecording();
+      const recordingData = await this.videoCapture.stopRecording();
+      // Store the recording data for manual mode
+      (this as any)._recordingData = recordingData;
       this.videoCapture = null;
+    }
+    
+    // Resolve manual stop if waiting
+    if ((this as any)._manualStopResolver) {
+      (this as any)._manualStopResolver();
+      (this as any)._manualStopResolver = null;
     }
   }
 
@@ -707,6 +753,11 @@ export class FigmaRecorder {
   // Get current page for advanced operations
   getPage(): Page | null {
     return this.page;
+  }
+
+  // Check if recording is currently active
+  isRecording(): boolean {
+    return !!(this.frameCapture?.isActive() || this.videoCapture?.isActive());
   }
 
   private async hideFigmaUI(): Promise<void> {

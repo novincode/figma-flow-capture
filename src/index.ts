@@ -207,6 +207,7 @@ async function main() {
     frameRate,
     waitForCanvas: advancedResponse.waitForCanvas ?? true,
     format: formatResponse.format,
+    stopMode: stopResponse.stopMode, // Add stopMode to options
     ...(customWidth && { customWidth }),
     ...(customHeight && { customHeight }),
     scaleToFit: !!(customWidth && customHeight) // Enable scaling when custom dimensions are provided
@@ -287,10 +288,24 @@ async function main() {
 process.on('SIGINT', async () => {
   console.log(chalk.yellow('\n\n🛑 Recording interrupted by user'));
   if (globalRecorder) {
-    await globalRecorder.cleanup();
+    try {
+      // Stop recording first if it's active
+      if (globalRecorder.isRecording()) {
+        logger.info('Stopping active recording...');
+        await globalRecorder.stopRecording();
+      }
+      await globalRecorder.cleanup();
+    } catch (error) {
+      logger.error('Error during graceful shutdown:', error);
+    }
   }
   // Force close shared browser
-  await FigmaRecorder.closeSharedBrowser();
+  try {
+    await FigmaRecorder.closeSharedBrowser();
+  } catch (error) {
+    logger.error('Error closing shared browser:', error);
+  }
+  logger.info('Recording stopped gracefully');
   process.exit(0);
 });
 

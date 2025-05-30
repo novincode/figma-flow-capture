@@ -92,6 +92,20 @@ app.post('/recording/start', async (req, res) => {
       return res.status(400).json({ error: 'figmaUrl is required' });
     }
 
+    // Set default values for optional fields
+    const recordingOptions: RecordingOptions = {
+      figmaUrl: options.figmaUrl,
+      recordingMode: options.recordingMode || 'video',
+      format: options.format || 'mp4',
+      // Only set default duration if not in manual mode
+      duration: options.stopMode === 'manual' ? options.duration : (options.duration || 15),
+      frameRate: options.frameRate || 30,
+      waitForCanvas: options.waitForCanvas !== undefined ? options.waitForCanvas : true,
+      customWidth: options.customWidth,
+      customHeight: options.customHeight,
+      stopMode: options.stopMode || 'timer'
+    };
+
     // Generate session ID
     const sessionId = uuidv4();
     
@@ -104,7 +118,7 @@ app.post('/recording/start', async (req, res) => {
       recorder,
       status: 'preparing',
       startTime: new Date(),
-      options
+      options: recordingOptions
     };
     
     activeSessions.set(sessionId, session);
