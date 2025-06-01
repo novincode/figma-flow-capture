@@ -685,8 +685,8 @@ export class FigmaRecorder {
 
       const duration = (Date.now() - startTime) / 1000;
       
-      // Get final viewport size for result
-      const viewport = this.page.viewportSize();
+      // Get final viewport size for result (check if page is still available)
+      const viewport = this.page && !this.page.isClosed() ? this.page.viewportSize() : null;
       const actualResolution = viewport ? { width: viewport.width, height: viewport.height } : undefined;
 
       logger.info(`Recording completed successfully in ${duration.toFixed(2)}s`);

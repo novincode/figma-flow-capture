@@ -416,7 +416,9 @@ app.get('/sessions/active', (req, res) => {
       recordingMode: session.options.recordingMode || 'video',
       status: session.status,
       figmaUrl: session.options.figmaUrl,
-      duration: session.options.duration
+      duration: session.options.duration,
+      width: session.options.customWidth || 1920,
+      height: session.options.customHeight || 1080
     }));
     
     res.json({ sessions });
@@ -511,17 +513,25 @@ async function recordingProcess(session: RecordingSession) {
     const result = await session.recorder.startRecording(session.options);
     
     if (result.success) {
-      session.status = 'recording';
       session.outputPath = result.outputPath;
-      logger.info(`Recording session ${session.id} is now recording`);
+      logger.info(`Recording session ${session.id} completed successfully`);
+      
+      // Only mark as completed if not already stopped/failed externally
+      if (session.status === 'recording') {
+        session.status = 'completed';
+        session.endTime = new Date();
+      }
     } else {
       session.status = 'failed';
       session.error = result.error;
       logger.error(`Recording session ${session.id} failed to start: ${result.error}`);
     }
   } catch (error) {
-    session.status = 'failed';
-    session.error = error instanceof Error ? error.message : 'Unknown error';
+    // Only set failed status if not already completed/stopped
+    if (session.status === 'recording') {
+      session.status = 'failed';
+      session.error = error instanceof Error ? error.message : 'Unknown error';
+    }
     logger.error(`Error in recording process for session ${session.id}:`, error);
   }
 }
