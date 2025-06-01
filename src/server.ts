@@ -4,12 +4,16 @@ import { FigmaRecorder } from './core/recorder';
 import { RecordingOptions } from './types/recording';
 import { checkFFmpegAvailability } from './utils/ffmpeg-checker';
 import { logger } from './utils/logger';
+import { DependencyManager } from './utils/dependency-manager';
 import path from 'path';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 
 const app = express();
 const PORT = process.env.PORT || 8787;
+
+// Initialize dependency manager
+const dependencyManager = DependencyManager.getInstance();
 
 // Middleware
 app.use(cors());
@@ -426,6 +430,70 @@ app.get('/sessions/active', (req, res) => {
   }
 });
 
+// System management endpoints for automatic setup
+
+// Get detailed system information
+app.get('/system/info', async (req, res) => {
+  try {
+    const systemInfo = await dependencyManager.getSystemInfo();
+    res.json({ success: true, data: systemInfo });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Check all system dependencies
+app.get('/system/dependencies', async (req, res) => {
+  try {
+    const dependencies = await dependencyManager.checkAllDependencies();
+    res.json({ success: true, data: dependencies });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install specific dependency
+app.post('/system/install/:dependency', async (req, res) => {
+  try {
+    const { dependency } = req.params;
+    const result = await dependencyManager.installDependency(dependency);
+    res.json({ success: result.success, message: result.message, output: result.output });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Install all missing dependencies
+app.post('/system/install-all', async (req, res) => {
+  try {
+    const result = await dependencyManager.installAllMissing();
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Setup project (clone and install)
+app.post('/system/setup-project', async (req, res) => {
+  try {
+    const { repoUrl } = req.body;
+    const result = await dependencyManager.setupProject(repoUrl);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Start the core server
+app.post('/system/start-server', async (req, res) => {
+  try {
+    const result = await dependencyManager.startServer();
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Recording process handler
 async function recordingProcess(session: RecordingSession) {
   try {
@@ -443,74 +511,48 @@ async function recordingProcess(session: RecordingSession) {
     const result = await session.recorder.startRecording(session.options);
     
     if (result.success) {
-      session.status = 'completed';
+      session.status = 'recording';
       session.outputPath = result.outputPath;
-      logger.info(`Recording completed for session ${session.id}: ${result.outputPath}`);
+      logger.info(`Recording session ${session.id} is now recording`);
     } else {
       session.status = 'failed';
-      session.error = result.error || 'Recording failed without specific error';
-      logger.error(`Recording failed for session ${session.id}: ${session.error}`);
+      session.error = result.error;
+      logger.error(`Recording session ${session.id} failed to start: ${result.error}`);
     }
-    
   } catch (error) {
     session.status = 'failed';
     session.error = error instanceof Error ? error.message : 'Unknown error';
-    logger.error(`Recording failed for session ${session.id}:`, error);
-  } finally {
-    // Always cleanup the recorder
-    try {
-      await session.recorder.cleanup();
-    } catch (cleanupError) {
-      logger.error(`Cleanup failed for session ${session.id}:`, cleanupError);
-    }
+    logger.error(`Error in recording process for session ${session.id}:`, error);
   }
 }
 
 // Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('Received SIGTERM, shutting down gracefully...');
-  
-  // Stop all active recordings
-  for (const [sessionId, session] of activeSessions) {
-    if (session.status === 'recording') {
-      logger.info(`Stopping recording session ${sessionId} due to shutdown`);
-      try {
-        await session.recorder.stopRecording();
-        await session.recorder.cleanup();
-      } catch (error) {
-        logger.error(`Error stopping session ${sessionId}:`, error);
-      }
-    }
-  }
-  
-  process.exit(0);
-});
-
 process.on('SIGINT', async () => {
-  logger.info('Received SIGINT, shutting down gracefully...');
+  logger.info('SIGINT received, shutting down gracefully...');
   
   // Stop all active recordings
-  for (const [sessionId, session] of activeSessions) {
-    if (session.status === 'recording') {
-      logger.info(`Stopping recording session ${sessionId} due to shutdown`);
-      try {
-        await session.recorder.stopRecording();
-        await session.recorder.cleanup();
-      } catch (error) {
-        logger.error(`Error stopping session ${sessionId}:`, error);
-      }
+  for (const session of activeSessions.values()) {
+    try {
+      logger.info(`Stopping recording session ${session.id}...`);
+      await session.recorder.stopRecording();
+    } catch (error) {
+      logger.warn(`Error stopping session ${session.id}:`, error);
     }
   }
   
+  logger.info('All recordings stopped. Exiting now.');
   process.exit(0);
 });
 
-// Start server
-app.listen(PORT, () => {
-  logger.info(`🚀 Figma Flow Capture API Server running on http://localhost:${PORT}`);
-  logger.info(`📁 Recordings directory: ${path.join(process.cwd(), 'recordings')}`);
-  logger.info(`🔧 Node.js version: ${process.version}`);
-  logger.info(`🖥️  Platform: ${process.platform} ${process.arch}`);
+// Error handling middleware
+app.use((err: any, req: any, res: any, next: any) => {
+  logger.error('Unhandled error:', err);
+  res.status(500).json({ 
+    error: 'Internal server error',
+    details: err instanceof Error ? err.message : 'Unknown error'
+  });
 });
 
-export default app;
+app.listen(PORT, () => {
+  logger.info(`Server is running on http://localhost:${PORT}`);
+});
