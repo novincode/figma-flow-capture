@@ -51,6 +51,23 @@ function checkFrameSequence(inputDir: string): { totalFrames: number; missingFra
 }
 
 /**
+ * Adjusts video dimensions to be compatible with H.264 encoding.
+ * H.264 requires both width and height to be divisible by 2 (preferably by 16).
+ * 
+ * @param width - Original width
+ * @param height - Original height
+ * @returns Adjusted dimensions that are H.264 compatible
+ * @private
+ */
+function adjustDimensionsForH264(width: number, height: number): { width: number; height: number } {
+  // Ensure both dimensions are even (divisible by 2)
+  const adjustedWidth = width % 2 === 0 ? width : width - 1;
+  const adjustedHeight = height % 2 === 0 ? height : height - 1;
+  
+  return { width: adjustedWidth, height: adjustedHeight };
+}
+
+/**
  * Fills missing frames in a sequence by duplicating the nearest previous frame.
  * Ensures smooth video playback without gaps or jumps.
  * 
@@ -167,8 +184,23 @@ export async function convertFramesToVideo(options: FFmpegOptions): Promise<bool
     
     // Add scaling filter if target dimensions are specified
     if (targetWidth && targetHeight) {
-      ffmpegCmd += ` -vf "scale=${targetWidth}:${targetHeight}:flags=lanczos"`;
-      logger.info(`Adding scaling to ${targetWidth}x${targetHeight}`);
+      // Adjust dimensions for H.264 compatibility if format is MP4
+      if (format === 'mp4') {
+        const adjusted = adjustDimensionsForH264(targetWidth, targetHeight);
+        if (adjusted.width !== targetWidth || adjusted.height !== targetHeight) {
+          logger.info(`Adjusting dimensions from ${targetWidth}x${targetHeight} to ${adjusted.width}x${adjusted.height} for H.264 compatibility`);
+        }
+        ffmpegCmd += ` -vf "scale=${adjusted.width}:${adjusted.height}:flags=lanczos"`;
+        logger.info(`Adding scaling to ${adjusted.width}x${adjusted.height}`);
+      } else {
+        ffmpegCmd += ` -vf "scale=${targetWidth}:${targetHeight}:flags=lanczos"`;
+        logger.info(`Adding scaling to ${targetWidth}x${targetHeight}`);
+      }
+    } else if (format === 'mp4') {
+      // Even if no target dimensions are specified, we need to ensure the input dimensions are H.264 compatible
+      // Add a filter to adjust dimensions if they're not even
+      ffmpegCmd += ` -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2"`;
+      logger.info('Adding dimension adjustment filter to ensure H.264 compatibility (even width/height)');
     }
     
     // Add format-specific encoding options
@@ -419,6 +451,9 @@ export async function convertWebMToMp4(inputPath: string, outputPath: string): P
   try {
     // Build FFmpeg command for WebM to MP4 conversion with QuickTime compatibility
     let ffmpegCmd = `ffmpeg -y -i "${inputPath}"`;
+    
+    // Add dimension adjustment filter to ensure H.264 compatibility (even width/height)
+    ffmpegCmd += ` -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2"`;
     
     // Use H.264 with QuickTime-compatible settings
     ffmpegCmd += ` -c:v libx264 -pix_fmt yuv420p`;
