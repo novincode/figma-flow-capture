@@ -98,8 +98,8 @@ app.post('/recording/start', async (req, res) => {
       figmaUrl: options.figmaUrl,
       recordingMode: options.recordingMode || 'video',
       format: options.format || 'mp4',
-      // Only set default duration if not in manual mode
-      duration: options.stopMode === 'manual' ? options.duration : (options.duration || 15),
+      // Only set default duration if in timer mode, leave undefined for manual mode
+      duration: options.stopMode === 'timer' ? (options.duration || 15) : options.duration,
       frameRate: options.frameRate || 30,
       waitForCanvas: options.waitForCanvas !== undefined ? options.waitForCanvas : true,
       customWidth: options.customWidth,

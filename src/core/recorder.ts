@@ -579,16 +579,44 @@ export class FigmaRecorder {
             recordingData = (this as any)._recordingData || new Uint8Array(0);
           }
         } else {
-          // Timer mode: use duration or default
-          const defaultDuration = 15000; // 15 seconds default for API calls
-          const minDuration = 2000; // 2 seconds minimum
-          const requestedDuration = options.duration ? options.duration * 1000 : defaultDuration;
-          const actualDuration = Math.max(requestedDuration, minDuration);
-          
-          logger.info(`Recording for ${actualDuration / 1000}s (default: ${defaultDuration / 1000}s, minimum: ${minDuration / 1000}s)...`);
-          await new Promise(resolve => setTimeout(resolve, actualDuration));
-          
-          recordingData = await this.videoCapture.stopRecording();
+          // Timer mode: use duration if specified, otherwise treat as manual mode
+          if (options.duration) {
+            // Timer mode with specified duration
+            const minDuration = 2000; // 2 seconds minimum
+            const requestedDuration = options.duration * 1000;
+            const actualDuration = Math.max(requestedDuration, minDuration);
+            
+            logger.info(`Recording for ${actualDuration / 1000}s (minimum: ${minDuration / 1000}s)...`);
+            await new Promise(resolve => setTimeout(resolve, actualDuration));
+            
+            recordingData = await this.videoCapture.stopRecording();
+          } else {
+            // No duration specified - treat as unlimited recording (manual mode)
+            logger.info('Recording started with no duration limit. Use stopRecording() or Ctrl+C to stop...');
+            
+            // Keep recording until stopped externally
+            await new Promise<void>((resolve) => {
+              // Store the resolve function so stopRecording can call it
+              (this as any)._manualStopResolver = resolve;
+              
+              // Also handle process interruption for CLI
+              const handleInterrupt = () => {
+                logger.info('Unlimited recording stopped by interruption');
+                resolve();
+              };
+              
+              process.once('SIGINT', handleInterrupt);
+              process.once('SIGTERM', handleInterrupt);
+            });
+            
+            // After manual stop, get the recording data if videoCapture still exists
+            if (this.videoCapture && this.videoCapture.isActive()) {
+              recordingData = await this.videoCapture.stopRecording();
+            } else {
+              // VideoCapture was already stopped, get the stored data
+              recordingData = (this as any)._recordingData || new Uint8Array(0);
+            }
+          }
         }
         
         // Handle format conversion for video recordings
