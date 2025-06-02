@@ -46,148 +46,201 @@ export class VideoCapture {
     this.isRecording = true;
     logger.info('Starting simple browser media recording...');
 
-    // Simple MediaRecorder implementation - no complex scaling
+    // Clean up any existing recording artifacts from previous recording
+    await this.page.evaluate(() => {
+      // Remove any existing nuclear CSS overrides
+      const existingStyle = document.getElementById('figma-recording-style');
+      if (existingStyle) {
+        existingStyle.remove();
+        console.log('Cleaned up existing nuclear CSS');
+      }
+    });
+
+    // Simple MediaRecorder implementation with CSS dimension fixes
     await this.page.evaluate(() => {
       return new Promise<void>((resolve, reject) => {
-        const canvas = document.querySelector('canvas') as HTMLCanvasElement;
-        if (!canvas) {
-          reject(new Error('No canvas found for recording'));
-          return;
-        }
-
         try {
+          const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+          if (!canvas) {
+            reject(new Error('No canvas found for recording'));
+            return;
+          }
+
           // Check MediaRecorder support first
           if (!window.MediaRecorder) {
             reject(new Error('MediaRecorder not supported in this browser'));
             return;
           }
 
-          // Ensure canvas is visible and has content
-          const rect = canvas.getBoundingClientRect();
-          if (rect.width === 0 || rect.height === 0) {
-            reject(new Error('Canvas has no dimensions'));
-            return;
-          }          // Debug canvas state
-          console.log('Canvas found:', {
-            width: canvas.width,
-            height: canvas.height,
-            clientWidth: canvas.clientWidth,
-            clientHeight: canvas.clientHeight,
-            boundingRect: rect
-          });
-
-          // Check if canvas has actual content by sampling a pixel
-          try {
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              const imageData = ctx.getImageData(0, 0, 1, 1);
-              console.log('Canvas content check - first pixel:', imageData.data);
+          // NUCLEAR CSS FIX: Force everything to full screen
+          // Remove any existing recording styles
+          const existingStyle = document.getElementById('figma-recording-style');
+          if (existingStyle) {
+            existingStyle.remove();
+          }
+          
+          // Inject the nuclear CSS that actually works
+          const style = document.createElement('style');
+          style.id = 'figma-recording-style';
+          style.textContent = `
+            * {
+              margin: 0 !important;
+              padding: 0 !important;
+              width: 100% !important;
+              height: 100% !important;
+              position: fixed !important;
+              top: 0 !important;
+              right: 0 !important;
+              left: 0 !important;
+              bottom: 0 !important;
             }
-          } catch (e) {
-            console.warn('Could not check canvas content:', e);
-          }
-
-          // Get canvas stream directly - no scaling, no complexity
-          const stream = canvas.captureStream(30); // 30 FPS
+          `;
+          document.head.appendChild(style);
           
-          // Verify stream has tracks
-          const videoTracks = stream.getVideoTracks();
-          if (videoTracks.length === 0) {
-            reject(new Error('No video tracks in canvas stream'));
-            return;
-          }
-
-          console.log('Canvas stream created:', {
-            active: stream.active,
-            videoTracks: videoTracks.length,
-            tracks: stream.getTracks().map(t => ({ 
-              kind: t.kind, 
-              enabled: t.enabled, 
-              readyState: t.readyState 
-            }))
-          });          // Simple MediaRecorder setup with best compatibility
-          let mediaRecorder: MediaRecorder;
-          let mimeType: string;
+          console.log('Nuclear CSS fix applied - forcing everything to 100%');
           
-          // Check supported MIME types in order of preference
-          const supportedTypes = [
-            'video/webm;codecs=vp8',
-            'video/webm;codecs=vp9', 
-            'video/webm',
-            'video/mp4;codecs=h264',
-            'video/mp4'
-          ];
-          
-          mimeType = supportedTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
-          
-          if (!mimeType) {
-            reject(new Error('No supported video MIME types found'));
-            return;
-          }
-          
-          console.log('Using MIME type:', mimeType);
-          
-          try {
-            mediaRecorder = new MediaRecorder(stream, { 
-              mimeType,
-              videoBitsPerSecond: 2500000 // 2.5 Mbps
+          // Wait a moment for CSS to take effect
+          setTimeout(() => {
+            const rect = canvas.getBoundingClientRect();
+            console.log('Canvas dimensions after nuclear CSS fix:', {
+              intrinsic: { width: canvas.width, height: canvas.height },
+              displayed: { width: rect.width, height: rect.height },
+              viewport: { width: window.innerWidth, height: window.innerHeight }
             });
-          } catch (e) {
-            // Fallback without mimeType specification
-            try {
-              mediaRecorder = new MediaRecorder(stream, {
-                videoBitsPerSecond: 2500000
-              });
-              console.log('Using default MediaRecorder format');
-            } catch (e2) {
-              reject(new Error('Could not create MediaRecorder: ' + e2));
+
+            // Canvas should now fill the viewport
+            if (rect.width === 0 || rect.height === 0) {
+              reject(new Error('Canvas still has no dimensions after nuclear CSS fix'));
               return;
             }
-          }          const chunks: Blob[] = [];
 
-          mediaRecorder.ondataavailable = (event) => {
-            console.log('Data available:', event.data.size, 'bytes, type:', event.data.type);
-            if (event.data.size > 0) {
-              chunks.push(event.data);
-              console.log('Data chunk recorded:', event.data.size, 'bytes, total chunks:', chunks.length);
+            // Check if canvas has actual content by sampling a pixel
+            try {
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                const imageData = ctx.getImageData(0, 0, 1, 1);
+                console.log('Canvas content check - first pixel:', imageData.data);
+              }
+            } catch (e) {
+              console.warn('Could not check canvas content:', e);
             }
-          };
 
-          mediaRecorder.onstop = () => {
-            console.log('Recording stopped, total chunks:', chunks.length);
-            if (chunks.length === 0) {
-              console.error('No recording data collected');
-              (window as any).recordingError = 'No recording data found';
+            // Get canvas stream directly - the nuclear CSS should handle everything!
+            let stream: MediaStream;
+            try {
+              stream = canvas.captureStream(30); // 30 FPS
+            } catch (e) {
+              reject(new Error('Canvas stream capture failed: ' + e));
               return;
             }
             
-            const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
-            console.log('Created recording blob:', blob.size, 'bytes');
-            (window as any).recordingBlob = blob;
-          };        mediaRecorder.onerror = (event) => {
-          console.error('MediaRecorder error:', event);
-          const errorMsg = (event as any).error?.message || 'Unknown MediaRecorder error';
-          (window as any).recordingError = 'MediaRecorder failed: ' + errorMsg;
-        };
-
-          mediaRecorder.onstart = () => {
-            console.log('MediaRecorder started successfully, state:', mediaRecorder.state);
-          };          // Store recorder for later access
-          (window as any).mediaRecorder = mediaRecorder;
-          (window as any).recordingChunks = chunks;
-          
-          // Start recording with data collection every 100ms for better data capture
-          mediaRecorder.start(100);
-          
-          // Wait a moment to ensure recording actually starts before resolving
-          setTimeout(() => {
-            if (mediaRecorder.state === 'recording') {
-              console.log('MediaRecorder confirmed recording, state:', mediaRecorder.state);
-              resolve();
-            } else {
-              reject(new Error('MediaRecorder failed to start recording, state: ' + mediaRecorder.state));
+            // Verify stream has tracks
+            const videoTracks = stream.getVideoTracks();
+            if (videoTracks.length === 0) {
+              reject(new Error('No video tracks in canvas stream'));
+              return;
             }
-          }, 500);
+
+            console.log('Canvas stream created:', {
+              active: stream.active,
+              videoTracks: videoTracks.length,
+              tracks: stream.getTracks().map(t => ({ 
+                kind: t.kind, 
+                enabled: t.enabled, 
+                readyState: t.readyState 
+              }))
+            });
+
+            // Simple MediaRecorder setup with best compatibility
+            let mediaRecorder: MediaRecorder;
+            let mimeType: string;
+            
+            // Check supported MIME types in order of preference
+            const supportedTypes = [
+              'video/webm;codecs=vp8',
+              'video/webm;codecs=vp9', 
+              'video/webm',
+              'video/mp4;codecs=h264',
+              'video/mp4'
+            ];
+            
+            mimeType = supportedTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
+            
+            if (!mimeType) {
+              reject(new Error('No supported video MIME types found'));
+              return;
+            }
+            
+            console.log('Using MIME type:', mimeType);
+            
+            try {
+              mediaRecorder = new MediaRecorder(stream, { 
+                mimeType,
+                videoBitsPerSecond: 2500000 // 2.5 Mbps
+              });
+            } catch (e) {
+              // Fallback without mimeType specification
+              try {
+                mediaRecorder = new MediaRecorder(stream, {
+                  videoBitsPerSecond: 2500000
+                });
+                console.log('Using default MediaRecorder format');
+              } catch (e2) {
+                reject(new Error('Could not create MediaRecorder: ' + e2));
+                return;
+              }
+            }
+
+            const chunks: Blob[] = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+              console.log('Data available:', event.data.size, 'bytes, type:', event.data.type);
+              if (event.data.size > 0) {
+                chunks.push(event.data);
+                console.log('Data chunk recorded:', event.data.size, 'bytes, total chunks:', chunks.length);
+              }
+            };
+
+            mediaRecorder.onstop = () => {
+              console.log('Recording stopped, total chunks:', chunks.length);
+              if (chunks.length === 0) {
+                console.error('No recording data collected');
+                (window as any).recordingError = 'No recording data found';
+                return;
+              }
+              
+              const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'video/webm' });
+              console.log('Created recording blob:', blob.size, 'bytes');
+              (window as any).recordingBlob = blob;
+            };
+
+            mediaRecorder.onerror = (event) => {
+              console.error('MediaRecorder error:', event);
+              const errorMsg = (event as any).error?.message || 'Unknown MediaRecorder error';
+              (window as any).recordingError = 'MediaRecorder failed: ' + errorMsg;
+            };
+
+            mediaRecorder.onstart = () => {
+              console.log('MediaRecorder started successfully, state:', mediaRecorder.state);
+            };
+
+            // Store recorder for later access
+            (window as any).mediaRecorder = mediaRecorder;
+            (window as any).recordingChunks = chunks;
+            
+            // Start recording with data collection every 100ms for better data capture
+            mediaRecorder.start(100);
+            
+            // Wait a moment to ensure recording actually starts before resolving
+            setTimeout(() => {
+              if (mediaRecorder.state === 'recording') {
+                console.log('MediaRecorder confirmed recording, state:', mediaRecorder.state);
+                resolve();
+              } else {
+                reject(new Error('MediaRecorder failed to start recording, state: ' + mediaRecorder.state));
+              }
+            }, 500);
+          }, 500); // Wait for CSS to take effect
 
         } catch (error) {
           console.error('Video recording setup error:', error);
@@ -353,8 +406,8 @@ export class VideoCapture {
           console.log('Recorder already stopped, state:', mediaRecorder.state);
           try {
             mediaRecorder.stop();
-          } catch (e) {
-            console.warn('Error stopping already stopped recorder:', e);
+          } catch (alreadyStoppedError) {
+            console.warn('Error stopping already stopped recorder:', alreadyStoppedError);
             // Try to get existing data
             const blob = (window as any).recordingBlob;
             if (blob && blob.size > 0) {
@@ -369,8 +422,16 @@ export class VideoCapture {
       });
     });
 
-    // Clean up
+    // Clean up browser-side objects and remove nuclear CSS
     await this.page.evaluate(() => {
+      // Remove the nuclear CSS fix
+      const recordingStyle = document.getElementById('figma-recording-style');
+      if (recordingStyle) {
+        recordingStyle.remove();
+        console.log('Nuclear CSS fix removed');
+      }
+      
+      // Clean up recording objects
       delete (window as any).mediaRecorder;
       delete (window as any).recordingBlob;
       delete (window as any).recordingChunks;
@@ -386,5 +447,59 @@ export class VideoCapture {
    */
   isActive(): boolean {
     return this.isRecording;
+  }
+
+  /**
+   * Analyzes the Figma canvas and determines if virtual canvas will be needed
+   * for proper dimension recording. Useful for debugging dimension issues.
+   * 
+   * @returns Promise with canvas analysis information
+   */
+  async analyzeCanvasDimensions(): Promise<{
+    canvasFound: boolean;
+    originalDimensions: { width: number; height: number };
+    displayedDimensions: { width: number; height: number };
+    targetDimensions: { width: number; height: number };
+    needsVirtualCanvas: boolean;
+    reason?: string;
+  }> {
+    return await this.page.evaluate(() => {
+      const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+      if (!canvas) {
+        return {
+          canvasFound: false,
+          originalDimensions: { width: 0, height: 0 },
+          displayedDimensions: { width: 0, height: 0 },
+          targetDimensions: { width: 1080, height: 1920 },
+          needsVirtualCanvas: false,
+          reason: 'No canvas found'
+        };
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const targetWidth = 1080;
+      const targetHeight = 1920;
+      
+      const dimensionsMismatch = Math.abs(canvas.width - targetWidth) > 50 || 
+                               Math.abs(canvas.height - targetHeight) > 50;
+      const constrainedByParent = rect.width < canvas.width * 0.9 || 
+                                rect.height < canvas.height * 0.9;
+      
+      let reason = '';
+      if (dimensionsMismatch) {
+        reason = `Canvas dimensions ${canvas.width}x${canvas.height} don't match target ${targetWidth}x${targetHeight}`;
+      } else if (constrainedByParent) {
+        reason = `Canvas is constrained by parent (displayed: ${rect.width}x${rect.height}, actual: ${canvas.width}x${canvas.height})`;
+      }
+
+      return {
+        canvasFound: true,
+        originalDimensions: { width: canvas.width, height: canvas.height },
+        displayedDimensions: { width: rect.width, height: rect.height },
+        targetDimensions: { width: targetWidth, height: targetHeight },
+        needsVirtualCanvas: dimensionsMismatch || constrainedByParent,
+        reason: reason || 'Canvas dimensions are acceptable'
+      };
+    });
   }
 }

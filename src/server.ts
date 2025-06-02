@@ -177,12 +177,17 @@ app.post('/recording/:sessionId/stop', async (req, res) => {
     session.status = 'stopping';
     await session.recorder.stopRecording();
     
-    // Close the page to free up browser resources
+    // Close the page and clean up browser resources
+    // This will automatically close the browser if no other sessions are active
     await session.recorder.closePage();
     
     // Mark as completed after successful stop
     session.status = 'completed';
     session.endTime = new Date();
+    
+    // Remove the session from active sessions to ensure proper cleanup
+    activeSessions.delete(sessionId);
+    logger.info(`Session ${sessionId} removed from active sessions. Remaining sessions: ${activeSessions.size}`);
     
     res.json({ 
       message: 'Recording stopped successfully',
@@ -217,14 +222,23 @@ app.post('/session/:sessionId/stop', async (req, res) => {
     logger.info(`Stopping recording session ${sessionId}`);
     
     // Stop the recorder
-    const result = await session.recorder.stopRecording();
+    await session.recorder.stopRecording();
+    
+    // Close the page and clean up browser resources
+    // This will automatically close the browser if no other sessions are active
+    await session.recorder.closePage();
+    
     session.status = 'completed';
     session.endTime = new Date();
+    
+    // Remove the session from active sessions to ensure proper cleanup
+    activeSessions.delete(sessionId);
+    logger.info(`Session ${sessionId} removed from active sessions. Remaining sessions: ${activeSessions.size}`);
     
     res.json({ 
       message: 'Session stopped successfully',
       sessionId,
-      result
+      status: session.status
     });
     
   } catch (error) {

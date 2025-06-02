@@ -82,31 +82,46 @@ export class FigmaRecorder {
   async initialize(): Promise<void> {
     logger.info('Initializing Firefox browser with persistent context...');
     
-    // Use singleton pattern to ensure only one context initialization at a time
-    if (!FigmaRecorder.sharedContext && !FigmaRecorder.contextInitialization) {
-      FigmaRecorder.contextInitialization = this.createSharedContext();
-    }
+    // Check if we need to create a new context
+    let needsNewContext = false;
     
-    // Wait for shared context to be ready
-    if (FigmaRecorder.contextInitialization) {
-      FigmaRecorder.sharedContext = await FigmaRecorder.contextInitialization;
-      FigmaRecorder.contextInitialization = null;
-    }
-    
-    // Verify context is still alive
-    if (FigmaRecorder.sharedContext) {
+    if (!FigmaRecorder.sharedContext) {
+      needsNewContext = true;
+      logger.info('No existing shared context found');
+    } else {
+      // Verify context is still alive
       try {
-        // Test if context is still connected
+        // Test if context is still connected by checking browser connection
+        const browser = FigmaRecorder.sharedContext.browser();
+        if (!browser || !browser.isConnected()) {
+          throw new Error('Browser disconnected');
+        }
+        
+        // Additional test - try to get pages
         await FigmaRecorder.sharedContext.pages();
         logger.info('Reusing existing Firefox persistent context');
       } catch (error) {
-        logger.info('Shared context disconnected, creating new instance');
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.info(`Shared context is invalid (${errorMessage}), creating new instance`);
+        needsNewContext = true;
+        // Clean up the invalid context reference
         FigmaRecorder.sharedContext = null;
         FigmaRecorder.browserRefCount = 0;
-        FigmaRecorder.contextInitialization = this.createSharedContext();
-        FigmaRecorder.sharedContext = await FigmaRecorder.contextInitialization;
-        FigmaRecorder.contextInitialization = null;
       }
+    }
+    
+    // Create new context if needed
+    if (needsNewContext) {
+      // Ensure no concurrent context initialization
+      if (!FigmaRecorder.contextInitialization) {
+        logger.info('Creating new shared browser context...');
+        FigmaRecorder.contextInitialization = this.createSharedContext();
+      }
+      
+      // Wait for context creation to complete
+      FigmaRecorder.sharedContext = await FigmaRecorder.contextInitialization;
+      FigmaRecorder.contextInitialization = null;
+      logger.info('New Firefox persistent context created and ready');
     }
     
     this.context = FigmaRecorder.sharedContext;
@@ -823,17 +838,30 @@ export class FigmaRecorder {
       this.context = null;
       this.browser = null;
       
-      // Only decrement and close shared context if not already done by closePage()
+      // Decrement reference count safely
       if (FigmaRecorder.browserRefCount > 0) {
         FigmaRecorder.browserRefCount--;
+        logger.info(`Cleanup completed, active sessions: ${FigmaRecorder.browserRefCount}`);
+        
+        // Only close shared context if no more sessions are active
         if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
-          await FigmaRecorder.sharedContext.close();
+          logger.info('No more active sessions, closing shared browser context and terminating browser process');
+          try {
+            const browser = FigmaRecorder.sharedContext.browser();
+            if (browser?.isConnected()) {
+              // Close the browser process completely (this will also close the context)
+              await browser.close();
+              logger.info('Browser process terminated successfully');
+            }
+          } catch (error) {
+            logger.warn('Error closing browser process (may already be closed):', error);
+          }
           FigmaRecorder.sharedContext = null;
           FigmaRecorder.browserRefCount = 0;
         }
       }
       
-      logger.info('Cleanup completed');
+      logger.info('Cleanup completed successfully');
     } catch (error) {
       logger.error('Error during cleanup:', error);
     }
@@ -852,7 +880,16 @@ export class FigmaRecorder {
    */
   static async closeSharedBrowser(): Promise<void> {
     if (FigmaRecorder.sharedContext) {
-      await FigmaRecorder.sharedContext.close();
+      try {
+        const browser = FigmaRecorder.sharedContext.browser();
+        if (browser?.isConnected()) {
+          // Close the browser process completely
+          await browser.close();
+          logger.info('Shared browser process terminated successfully');
+        }
+      } catch (error) {
+        logger.warn('Error closing shared browser process (may already be closed):', error);
+      }
       FigmaRecorder.sharedContext = null;
       FigmaRecorder.browserRefCount = 0;
     }
@@ -879,15 +916,26 @@ export class FigmaRecorder {
       }
       
       // Decrement the reference count since this session is ending
-      FigmaRecorder.browserRefCount--;
-      logger.info(`Page closed (active sessions: ${FigmaRecorder.browserRefCount})`);
-      
-      // Only close shared context if no more sessions are active
-      if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
-        logger.info('No more active sessions, closing shared browser context');
-        await FigmaRecorder.sharedContext.close();
-        FigmaRecorder.sharedContext = null;
-        FigmaRecorder.browserRefCount = 0;
+      if (FigmaRecorder.browserRefCount > 0) {
+        FigmaRecorder.browserRefCount--;
+        logger.info(`Page closed (active sessions: ${FigmaRecorder.browserRefCount})`);
+        
+        // Only close shared context if no more sessions are active
+        if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
+          logger.info('No more active sessions, closing shared browser context and terminating browser process');
+          try {
+            const browser = FigmaRecorder.sharedContext.browser();
+            if (browser?.isConnected()) {
+              // Close the browser process completely
+              await browser.close();
+              logger.info('Browser process terminated successfully from closePage');
+            }
+          } catch (error) {
+            logger.warn('Error closing browser process from closePage (may already be closed):', error);
+          }
+          FigmaRecorder.sharedContext = null;
+          FigmaRecorder.browserRefCount = 0;
+        }
       }
     } catch (error) {
       logger.error('Error closing page:', error);
