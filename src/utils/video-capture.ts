@@ -93,6 +93,7 @@ export class VideoCapture {
               right: 0 !important;
               left: 0 !important;
               bottom: 0 !important;
+             
             }
           `;
           document.head.appendChild(style);

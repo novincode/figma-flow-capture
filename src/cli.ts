@@ -25,6 +25,8 @@ function parseArgs(): RecordingOptions | null {
     console.log('  --wait-for-canvas     Wait for canvas to load (true|false) [default: true]');
     console.log('  --stop-mode <mode>    Stop mode (timer|manual) [default: timer]');
     console.log('  --scale-to-fit        Scale canvas to fit dimensions (true|false) [default: false]');
+    console.log('  --figma-scaling <mode> Figma scaling mode (scale-down-width|scale-down|min-zoom|contain) [default: scale-down-width]');
+    console.log('  --figma-content-scaling <mode> Figma content scaling (fixed|responsive) [default: fixed]');
     process.exit(0);
   }
   
@@ -65,6 +67,12 @@ function parseArgs(): RecordingOptions | null {
       case '--scale-to-fit':
         options.scaleToFit = value === 'true';
         break;
+      case '--figma-scaling':
+        options.figmaScaling = value as 'scale-down-width' | 'scale-down' | 'min-zoom' | 'contain';
+        break;
+      case '--figma-content-scaling':
+        options.figmaContentScaling = value as 'fixed' | 'responsive';
+        break;
       default:
         console.error(`Unknown argument: ${flag}`);
         return null;
@@ -89,6 +97,8 @@ function parseArgs(): RecordingOptions | null {
     waitForCanvas: options.waitForCanvas !== false, // Default to true
     stopMode: options.stopMode || 'timer',
     scaleToFit: options.scaleToFit || false,
+    figmaScaling: options.figmaScaling || 'scale-down-width',
+    figmaContentScaling: options.figmaContentScaling || 'fixed'
   };
 }
 

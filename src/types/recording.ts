@@ -1,4 +1,19 @@
 /**
+ * Figma scaling mode for controlling canvas display behavior.
+ * These correspond to Figma's URL parameters for prototype viewing.
+ */
+export type FigmaScalingMode = 
+  | 'scale-down-width'    // Fit width (scale-down-width)
+  | 'scale-down'          // Fit width and height (scale-down)
+  | 'min-zoom'            // Actual size (min-zoom)
+  | 'contain';            // Responsive (contain)
+
+/**
+ * Figma content scaling mode for controlling how content adapts to the viewport.
+ */
+export type FigmaContentScaling = 'fixed' | 'responsive';
+
+/**
  * Configuration options for recording Figma prototype flows.
  * Supports both video recording and frame-by-frame capture modes.
  */
@@ -32,6 +47,12 @@ export interface RecordingOptions {
   
   /** Whether to scale canvas content to fit specified dimensions */
   scaleToFit?: boolean;
+  
+  /** Figma scaling mode for controlling canvas display (default: 'scale-down-width') */
+  figmaScaling?: FigmaScalingMode;
+  
+  /** Figma content scaling mode (default: 'fixed') */
+  figmaContentScaling?: FigmaContentScaling;
 }
 
 /**

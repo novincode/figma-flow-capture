@@ -6,6 +6,7 @@ import { FrameCapture } from '../utils/frame-capture.js';
 import { VideoCapture } from '../utils/video-capture.js';
 import { convertFramesToVideo } from '../utils/ffmpeg-converter.js';
 import { RecordingOptions, RecordingResult, CanvasInfo } from '../types/recording.js';
+import { FigmaUrlProcessor } from '../utils/figma-url-processor.js';
 
 /**
  * Main recording orchestrator for capturing Figma prototype flows.
@@ -60,7 +61,10 @@ export class FigmaRecorder {
   /** Video capture handler for real-time recording */
   private videoCapture: VideoCapture | null = null;
   
-  /** Shared persistent browser context for performance */
+  /** Shared browser instance - NEVER CLOSE THIS */
+  private static sharedBrowser: Browser | null = null;
+  
+  /** Shared persistent context - NEVER CLOSE THIS */
   private static sharedContext: BrowserContext | null = null;
   
   /** Reference counter for shared context management */
@@ -70,7 +74,7 @@ export class FigmaRecorder {
   private static persistentDataDir: string = join(process.cwd(), '.browser-data-firefox');
   
   /** Promise to ensure single context initialization */
-  private static contextInitialization: Promise<BrowserContext> | null = null;
+  private static contextInitialization: Promise<{ browser: Browser; context: BrowserContext }> | null = null;
 
   /**
    * Initializes the Firefox browser with persistent context for optimal performance.
@@ -85,51 +89,57 @@ export class FigmaRecorder {
     // Check if we need to create a new context
     let needsNewContext = false;
     
-    if (!FigmaRecorder.sharedContext) {
+    if (!FigmaRecorder.sharedBrowser || !FigmaRecorder.sharedContext) {
       needsNewContext = true;
-      logger.info('No existing shared context found');
+      logger.info('No existing shared browser/context found');
     } else {
-      // Verify context is still alive
+      // Verify browser and context are still alive
       try {
-        // Test if context is still connected by checking browser connection
-        const browser = FigmaRecorder.sharedContext.browser();
-        if (!browser || !browser.isConnected()) {
+        if (!FigmaRecorder.sharedBrowser.isConnected()) {
           throw new Error('Browser disconnected');
         }
         
-        // Additional test - try to get pages
+        // Test context by trying to get pages
         await FigmaRecorder.sharedContext.pages();
-        logger.info('Reusing existing Firefox persistent context');
+        logger.info('Reusing existing Firefox persistent browser and context');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logger.info(`Shared context is invalid (${errorMessage}), creating new instance`);
+        logger.info(`Shared browser/context is invalid (${errorMessage}), creating new instance`);
         needsNewContext = true;
-        // Clean up the invalid context reference
+        // Clean up the invalid references
+        FigmaRecorder.sharedBrowser = null;
         FigmaRecorder.sharedContext = null;
         FigmaRecorder.browserRefCount = 0;
+        
+        // Wait for any Firefox cleanup to complete before trying to reuse the profile
+        logger.info('Waiting for Firefox profile cleanup...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
     
-    // Create new context if needed
+    // Create new browser and context if needed
     if (needsNewContext) {
-      // Ensure no concurrent context initialization
+      // Ensure no concurrent initialization
       if (!FigmaRecorder.contextInitialization) {
-        logger.info('Creating new shared browser context...');
-        FigmaRecorder.contextInitialization = this.createSharedContext();
+        logger.info('Creating new shared browser and context...');
+        FigmaRecorder.contextInitialization = this.createSharedBrowserAndContext();
       }
       
-      // Wait for context creation to complete
-      FigmaRecorder.sharedContext = await FigmaRecorder.contextInitialization;
+      // Wait for creation to complete
+      const result = await FigmaRecorder.contextInitialization;
+      FigmaRecorder.sharedBrowser = result.browser;
+      FigmaRecorder.sharedContext = result.context;
       FigmaRecorder.contextInitialization = null;
-      logger.info('New Firefox persistent context created and ready');
+      logger.info('New Firefox persistent browser and context created and ready');
     }
     
+    this.browser = FigmaRecorder.sharedBrowser;
     this.context = FigmaRecorder.sharedContext;
-    if (!this.context) {
-      throw new Error('Failed to initialize browser context');
+    
+    if (!this.browser || !this.context) {
+      throw new Error('Failed to initialize browser and context');
     }
     
-    this.browser = this.context.browser(); // Get browser from context
     FigmaRecorder.browserRefCount++;
 
     // Create new page in the persistent context
@@ -161,54 +171,106 @@ export class FigmaRecorder {
   }
 
   /**
-   * Creates a new shared browser context with optimized settings.
+   * Creates a new shared browser and context with optimized settings.
    * This method is called only once per application lifecycle.
    * 
    * @private
-   * @returns Promise resolving to the created browser context
+   * @returns Promise resolving to browser and context objects
    */
-  private async createSharedContext(): Promise<BrowserContext> {
-    logger.info('Creating new Firefox persistent context...');
+  private async createSharedBrowserAndContext(): Promise<{ browser: Browser; context: BrowserContext }> {
+    logger.info('Creating new Firefox persistent browser and context...');
+    
+    // Clean up any Firefox lock files that might prevent profile reuse
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    
+    try {
+      // Remove Firefox lock files that might be left behind
+      const lockFiles = [
+        path.join(FigmaRecorder.persistentDataDir, 'lock'),
+        path.join(FigmaRecorder.persistentDataDir, '.parentlock'),
+        path.join(FigmaRecorder.persistentDataDir, 'parent.lock')
+      ];
+      
+      for (const lockFile of lockFiles) {
+        try {
+          await fs.unlink(lockFile);
+          logger.info(`Removed Firefox lock file: ${lockFile}`);
+        } catch (error) {
+          // Lock file might not exist, which is fine
+        }
+      }
+    } catch (error) {
+      logger.warn('Error cleaning up Firefox lock files:', error);
+    }
     
     // Create persistent user data directory
-    const fs = await import('fs/promises');
     try {
       await fs.mkdir(FigmaRecorder.persistentDataDir, { recursive: true });
     } catch (error) {
       // Directory might already exist
     }
 
-    // Use launchPersistentContext for better performance and session persistence
-    const context = await firefox.launchPersistentContext(FigmaRecorder.persistentDataDir, {
-      headless: false, // Keep visible for debugging and monitoring
-      args: [
-        '--disable-web-security', // Allow cross-origin requests for Figma
-        '--disable-features=VizDisplayCompositor', // Improve canvas rendering
-        '--disable-gpu-sandbox', // Improve GPU performance
-        '--disable-software-rasterizer', // Use hardware acceleration
-        '--no-sandbox', // Disable sandboxing for better performance
-        '--disable-dev-shm-usage', // Overcome limited resource problems
-        '--disable-extensions-except-webgl', // Keep WebGL for Figma
-      ],
-      viewport: { width: 1920, height: 1080 },
-      ignoreHTTPSErrors: true,
-      // Optimize for recording
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      // Enable hardware acceleration
-      hasTouch: false,
-      isMobile: false,
-      // Preload common resources
-      extraHTTPHeaders: {
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'max-age=3600'
-      },
-      // Shorter launch timeout is fine (only affects startup time)
-      timeout: 90000,
-      slowMo: 50 // Reduced delay for faster recording
-    });
+    // Use regular launch + persistent context instead of launchPersistentContext
+    let browser: Browser;
+    let context: BrowserContext;
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
+        // Launch browser with minimal flags that actually work
+        browser = await firefox.launch({
+          headless: false,
+          args: [
+            '--no-sandbox',
+            '--disable-dev-shm-usage'
+          ],
+          timeout: 60000
+        });
 
-    logger.info('New Firefox persistent context created');
-    return context;
+        // Create persistent context manually
+        context = await browser.newContext({
+          viewport: { width: 1920, height: 1080 },
+          ignoreHTTPSErrors: true,
+          userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          hasTouch: false,
+          isMobile: false,
+          extraHTTPHeaders: {
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'max-age=3600'
+          }
+        });
+
+        logger.info('New Firefox browser and context created successfully');
+        return { browser, context };
+        
+      } catch (error) {
+        retryCount++;
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        logger.warn(`Failed to create Firefox browser/context (attempt ${retryCount}/${maxRetries}): ${errorMessage}`);
+        
+        if (retryCount < maxRetries) {
+          // Wait a bit before retrying and clean up any remaining files
+          logger.info('Waiting 3 seconds before retry...');
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          
+          // Try to clean up the persistent directory on retry
+          try {
+            // Remove the entire directory and recreate it fresh
+            await fs.rm(FigmaRecorder.persistentDataDir, { recursive: true, force: true });
+            await fs.mkdir(FigmaRecorder.persistentDataDir, { recursive: true });
+            logger.info('Cleaned up persistent directory for retry');
+          } catch (cleanupError) {
+            logger.warn('Failed to clean up directory for retry:', cleanupError);
+          }
+        } else {
+          throw new Error(`Failed to create Firefox browser/context after ${maxRetries} attempts: ${errorMessage}`);
+        }
+      }
+    }
+    
+    throw new Error('Should not reach here');
   }
 
   /**
@@ -478,8 +540,15 @@ export class FigmaRecorder {
     logger.info(`🎬 Starting ${options.recordingMode} recording...`);
 
     try {
+      // Apply Figma scaling parameters to the URL before navigation
+      const processedUrl = FigmaUrlProcessor.applyScaling(
+        options.figmaUrl,
+        options.figmaScaling || 'scale-down-width',
+        options.figmaContentScaling || 'fixed'
+      );
+      
       // Navigate to Figma first to detect canvas size for auto-sizing
-      const canvasInfo = await this.navigateToFigma(options.figmaUrl, options.waitForCanvas);
+      const canvasInfo = await this.navigateToFigma(processedUrl, options.waitForCanvas);
       
       if (options.waitForCanvas && !canvasInfo.detected) {
         throw new Error('Canvas not found on Figma page');
@@ -805,22 +874,12 @@ export class FigmaRecorder {
 
   /**
    * Performs comprehensive cleanup of browser resources and recording components.
-   * Manages shared browser context lifecycle and reference counting for optimal resource usage.
+   * NEVER closes the shared browser/context - only cleans up this instance.
    * 
    * @throws {Error} If cleanup operations fail (errors are logged but not re-thrown)
-   * 
-   * @example
-   * ```typescript
-   * try {
-   *   await recorder.cleanup();
-   *   console.log('Cleanup completed successfully');
-   * } catch (error) {
-   *   console.error('Cleanup failed:', error);
-   * }
-   * ```
    */
   async cleanup(): Promise<void> {
-    logger.info('Cleaning up browser resources...');
+    logger.info('Cleaning up recorder instance...');
     
     try {
       // Ensure recording is stopped first and wait adequately
@@ -829,12 +888,13 @@ export class FigmaRecorder {
       // Wait longer for any pending screenshot operations to complete
       await new Promise(resolve => setTimeout(resolve, 2000));
       
+      // Close only this instance's page - NEVER touch shared resources
       if (this.page && !this.page.isClosed()) {
         await this.page.close();
         this.page = null;
       }
       
-      // Clean up instance references
+      // Clean up instance references - but keep shared resources alive
       this.context = null;
       this.browser = null;
       
@@ -843,67 +903,58 @@ export class FigmaRecorder {
         FigmaRecorder.browserRefCount--;
         logger.info(`Cleanup completed, active sessions: ${FigmaRecorder.browserRefCount}`);
         
-        // Only close shared context if no more sessions are active
-        if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
-          logger.info('No more active sessions, closing shared browser context and terminating browser process');
-          try {
-            const browser = FigmaRecorder.sharedContext.browser();
-            if (browser?.isConnected()) {
-              // Close the browser process completely (this will also close the context)
-              await browser.close();
-              logger.info('Browser process terminated successfully');
-            }
-          } catch (error) {
-            logger.warn('Error closing browser process (may already be closed):', error);
-          }
-          FigmaRecorder.sharedContext = null;
-          FigmaRecorder.browserRefCount = 0;
+        // NEVER CLOSE SHARED BROWSER/CONTEXT FROM HERE
+        // They stay alive until explicit shutdown or process exit
+        if (FigmaRecorder.browserRefCount <= 0) {
+          logger.info('No more active sessions, but keeping shared browser/context alive for future recordings');
         }
       }
       
-      logger.info('Cleanup completed successfully');
+      logger.info('Recorder instance cleanup completed successfully');
     } catch (error) {
-      logger.error('Error during cleanup:', error);
+      logger.error('Error during recorder cleanup:', error);
     }
   }
 
   /**
-   * Forces closure of the shared browser context across all recorder instances.
-   * Useful for emergency cleanup or when you need to ensure all browser resources are released.
+   * Forces closure of the shared browser and context across all recorder instances.
+   * Only call this on application shutdown or emergency cleanup.
    * 
    * @static
-   * @example
-   * ```typescript
-   * await FigmaRecorder.closeSharedBrowser();
-   * console.log('All browser instances closed');
-   * ```
    */
   static async closeSharedBrowser(): Promise<void> {
-    if (FigmaRecorder.sharedContext) {
-      try {
-        const browser = FigmaRecorder.sharedContext.browser();
-        if (browser?.isConnected()) {
-          // Close the browser process completely
-          await browser.close();
-          logger.info('Shared browser process terminated successfully');
-        }
-      } catch (error) {
-        logger.warn('Error closing shared browser process (may already be closed):', error);
+    logger.info('Force closing shared browser and context...');
+    
+    try {
+      // Close context first
+      if (FigmaRecorder.sharedContext) {
+        await FigmaRecorder.sharedContext.close();
+        FigmaRecorder.sharedContext = null;
+        logger.info('Shared context closed');
       }
-      FigmaRecorder.sharedContext = null;
-      FigmaRecorder.browserRefCount = 0;
+    } catch (error) {
+      logger.warn('Error closing shared context:', error);
     }
+    
+    try {
+      // Then close browser
+      if (FigmaRecorder.sharedBrowser && FigmaRecorder.sharedBrowser.isConnected()) {
+        await FigmaRecorder.sharedBrowser.close();
+        FigmaRecorder.sharedBrowser = null;
+        logger.info('Shared browser closed');
+      }
+    } catch (error) {
+      logger.warn('Error closing shared browser:', error);
+    }
+    
+    FigmaRecorder.browserRefCount = 0;
+    logger.info('Shared browser and context cleanup completed');
   }
 
   /**
    * Closes the current page without affecting the shared browser context.
    * Used when stopping individual recording sessions while keeping the browser alive for other sessions.
-   * 
-   * @example
-   * ```typescript
-   * await recorder.closePage();
-   * console.log('Page closed, browser context remains active');
-   * ```
+   * The browser context remains active and ready for future recordings.
    */
   async closePage(): Promise<void> {
     logger.info('Closing recording page...');
@@ -920,21 +971,9 @@ export class FigmaRecorder {
         FigmaRecorder.browserRefCount--;
         logger.info(`Page closed (active sessions: ${FigmaRecorder.browserRefCount})`);
         
-        // Only close shared context if no more sessions are active
-        if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
-          logger.info('No more active sessions, closing shared browser context and terminating browser process');
-          try {
-            const browser = FigmaRecorder.sharedContext.browser();
-            if (browser?.isConnected()) {
-              // Close the browser process completely
-              await browser.close();
-              logger.info('Browser process terminated successfully from closePage');
-            }
-          } catch (error) {
-            logger.warn('Error closing browser process from closePage (may already be closed):', error);
-          }
-          FigmaRecorder.sharedContext = null;
-          FigmaRecorder.browserRefCount = 0;
+        // NEVER CLOSE SHARED BROWSER/CONTEXT - they must stay alive
+        if (FigmaRecorder.browserRefCount <= 0) {
+          logger.info('No more active sessions, but keeping shared browser/context alive for future recordings');
         }
       }
     } catch (error) {

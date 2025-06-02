@@ -199,6 +199,39 @@ async function main() {
     process.exit(1);
   }
 
+  // Figma scaling options
+  const scalingResponse = await prompts({
+    type: 'select',
+    name: 'figmaScaling',
+    message: 'Select Figma canvas display mode:',
+    choices: [
+      { title: 'Fit Width - Scale to fit viewport width', value: 'scale-down-width' },
+      { title: 'Fit Width & Height - Scale to fit entire viewport', value: 'scale-down' },
+      { title: 'Actual Size - Display at original size', value: 'min-zoom' },
+      { title: 'Responsive - Adaptive scaling', value: 'contain' }
+    ],
+    initial: 0
+  });
+
+  if (!scalingResponse.figmaScaling) {
+    process.exit(1);
+  }
+
+  const contentScalingResponse = await prompts({
+    type: 'select',
+    name: 'figmaContentScaling',
+    message: 'Select content scaling behavior:',
+    choices: [
+      { title: 'Fixed - Content maintains fixed dimensions', value: 'fixed' },
+      { title: 'Responsive - Content adapts to viewport', value: 'responsive' }
+    ],
+    initial: 0
+  });
+
+  if (!contentScalingResponse.figmaContentScaling) {
+    process.exit(1);
+  }
+
   // Advanced options
   const advancedResponse = await prompts({
     type: 'confirm',
@@ -218,6 +251,8 @@ async function main() {
     waitForCanvas: advancedResponse.waitForCanvas ?? true,
     format: formatResponse.format,
     stopMode: stopResponse.stopMode, // Add stopMode to options
+    figmaScaling: scalingResponse.figmaScaling,
+    figmaContentScaling: contentScalingResponse.figmaContentScaling,
     ...(customWidth && { customWidth }),
     ...(customHeight && { customHeight }),
     scaleToFit: !!(customWidth && customHeight) // Enable scaling when custom dimensions are provided
@@ -231,6 +266,8 @@ async function main() {
   if (options.scaleToFit) {
     console.log(chalk.gray(`• Scaling: Canvas will be scaled to fit ${customWidth}x${customHeight}`));
   }
+  console.log(chalk.gray(`• Figma scaling: ${options.figmaScaling}`));
+  console.log(chalk.gray(`• Content scaling: ${options.figmaContentScaling}`));
   console.log(chalk.gray(`• Stop mode: ${stopResponse.stopMode}`));
   if (options.duration) {
     console.log(chalk.gray(`• Duration: ${options.duration}s`));

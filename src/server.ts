@@ -108,7 +108,10 @@ app.post('/recording/start', async (req, res) => {
       waitForCanvas: options.waitForCanvas !== undefined ? options.waitForCanvas : true,
       customWidth: options.customWidth,
       customHeight: options.customHeight,
-      stopMode: options.stopMode || 'timer'
+      stopMode: options.stopMode || 'timer',
+      scaleToFit: options.scaleToFit || false,
+      figmaScaling: options.figmaScaling || 'scale-down-width',
+      figmaContentScaling: options.figmaContentScaling || 'fixed'
     };
 
     // Generate session ID
@@ -153,22 +156,29 @@ app.post('/recording/start', async (req, res) => {
   }
 });
 
-// Stop recording
-app.post('/recording/:sessionId/stop', async (req, res) => {
+// Helper function to stop a recording session
+async function stopRecordingSession(sessionId: string, requireRecordingStatus: boolean = false): Promise<{ success: boolean; data?: any; error?: string; statusCode?: number }> {
   try {
-    const { sessionId } = req.params;
     const session = activeSessions.get(sessionId);
     
     if (!session) {
-      return res.status(404).json({ error: 'Recording session not found' });
+      return { success: false, error: 'Recording session not found', statusCode: 404 };
     }
     
     if (session.status === 'completed' || session.status === 'failed') {
-      return res.json({ 
-        message: 'Recording already stopped',
-        status: session.status,
-        outputPath: session.outputPath
-      });
+      return { 
+        success: true,
+        data: { 
+          message: 'Recording already stopped',
+          sessionId,
+          status: session.status,
+          outputPath: session.outputPath
+        }
+      };
+    }
+    
+    if (requireRecordingStatus && session.status !== 'recording') {
+      return { success: false, error: 'Session is not currently recording', statusCode: 400 };
     }
     
     logger.info(`Stopping recording session ${sessionId}`);
@@ -178,7 +188,6 @@ app.post('/recording/:sessionId/stop', async (req, res) => {
     await session.recorder.stopRecording();
     
     // Close the page and clean up browser resources
-    // This will automatically close the browser if no other sessions are active
     await session.recorder.closePage();
     
     // Mark as completed after successful stop
@@ -189,63 +198,57 @@ app.post('/recording/:sessionId/stop', async (req, res) => {
     activeSessions.delete(sessionId);
     logger.info(`Session ${sessionId} removed from active sessions. Remaining sessions: ${activeSessions.size}`);
     
-    res.json({ 
-      message: 'Recording stopped successfully',
-      sessionId,
-      status: session.status,
-      outputPath: session.outputPath
-    });
+    return {
+      success: true,
+      data: {
+        message: 'Recording stopped successfully',
+        sessionId,
+        status: session.status,
+        outputPath: session.outputPath
+      }
+    };
     
   } catch (error) {
     logger.error('Error stopping recording:', error);
-    res.status(500).json({ 
+    return {
+      success: false,
       error: 'Failed to stop recording',
-      details: error instanceof Error ? error.message : 'Unknown error'
+      statusCode: 500,
+      data: { details: error instanceof Error ? error.message : 'Unknown error' }
+    };
+  }
+}
+
+// Stop recording
+app.post('/recording/:sessionId/stop', async (req, res) => {
+  const { sessionId } = req.params;
+  const result = await stopRecordingSession(sessionId, false);
+  
+  if (result.success) {
+    res.json(result.data);
+  } else {
+    res.status(result.statusCode || 500).json({ 
+      error: result.error,
+      ...(result.data || {})
     });
   }
 });
 
-// Stop a recording session (without deleting)
+// Stop a recording session (alias for backwards compatibility)
 app.post('/session/:sessionId/stop', async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const session = activeSessions.get(sessionId);
-    
-    if (!session) {
-      return res.status(404).json({ error: 'Recording session not found' });
-    }
-    
-    if (session.status !== 'recording') {
-      return res.status(400).json({ error: 'Session is not currently recording' });
-    }
-    
-    logger.info(`Stopping recording session ${sessionId}`);
-    
-    // Stop the recorder
-    await session.recorder.stopRecording();
-    
-    // Close the page and clean up browser resources
-    // This will automatically close the browser if no other sessions are active
-    await session.recorder.closePage();
-    
-    session.status = 'completed';
-    session.endTime = new Date();
-    
-    // Remove the session from active sessions to ensure proper cleanup
-    activeSessions.delete(sessionId);
-    logger.info(`Session ${sessionId} removed from active sessions. Remaining sessions: ${activeSessions.size}`);
-    
-    res.json({ 
+  const { sessionId } = req.params;
+  const result = await stopRecordingSession(sessionId, true);
+  
+  if (result.success) {
+    res.json({
       message: 'Session stopped successfully',
       sessionId,
-      status: session.status
+      status: result.data?.status
     });
-    
-  } catch (error) {
-    logger.error('Error stopping session:', error);
-    res.status(500).json({ 
-      error: 'Failed to stop session',
-      details: error instanceof Error ? error.message : 'Unknown error'
+  } else {
+    res.status(result.statusCode || 500).json({ 
+      error: result.error,
+      ...(result.data || {})
     });
   }
 });
@@ -379,24 +382,23 @@ app.delete('/session/:sessionId', async (req, res) => {
     
     logger.info(`Clearing recording session ${sessionId}`);
     
-    // Stop the recorder if it's still running
+    // Stop the recorder if it's still running using our helper function
     if (session.status === 'recording' || session.status === 'preparing') {
-      try {
-        await session.recorder.stopRecording();
-      } catch (error) {
-        logger.warn(`Failed to stop recorder while clearing session ${sessionId}:`, error);
+      const stopResult = await stopRecordingSession(sessionId, false);
+      if (!stopResult.success) {
+        logger.warn(`Failed to stop recorder while clearing session ${sessionId}: ${stopResult.error}`);
       }
+    } else {
+      // If not recording, just do cleanup
+      try {
+        await session.recorder.cleanup();
+      } catch (error) {
+        logger.warn(`Failed to cleanup recorder while clearing session ${sessionId}:`, error);
+      }
+      
+      // Remove from active sessions if not already removed
+      activeSessions.delete(sessionId);
     }
-    
-    // Cleanup the recorder
-    try {
-      await session.recorder.cleanup();
-    } catch (error) {
-      logger.warn(`Failed to cleanup recorder while clearing session ${sessionId}:`, error);
-    }
-    
-    // Remove from active sessions
-    activeSessions.delete(sessionId);
     
     res.json({ 
       message: 'Session cleared successfully',
@@ -569,15 +571,20 @@ async function recordingProcess(session: RecordingSession) {
 process.on('SIGINT', async () => {
   logger.info('SIGINT received, shutting down gracefully...');
   
-  // Stop all active recordings
-  for (const session of activeSessions.values()) {
+  // Stop all active recordings using our helper function
+  const stopPromises = Array.from(activeSessions.keys()).map(async (sessionId) => {
     try {
-      logger.info(`Stopping recording session ${session.id}...`);
-      await session.recorder.stopRecording();
+      logger.info(`Stopping recording session ${sessionId}...`);
+      const result = await stopRecordingSession(sessionId, false);
+      if (!result.success) {
+        logger.warn(`Failed to stop session ${sessionId}: ${result.error}`);
+      }
     } catch (error) {
-      logger.warn(`Error stopping session ${session.id}:`, error);
+      logger.warn(`Error stopping session ${sessionId}:`, error);
     }
-  }
+  });
+  
+  await Promise.all(stopPromises);
   
   logger.info('All recordings stopped. Exiting now.');
   process.exit(0);
