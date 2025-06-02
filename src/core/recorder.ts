@@ -68,6 +68,9 @@ export class FigmaRecorder {
   
   /** Directory for persistent browser data (cross-platform compatible) */
   private static persistentDataDir: string = join(process.cwd(), '.browser-data-firefox');
+  
+  /** Promise to ensure single context initialization */
+  private static contextInitialization: Promise<BrowserContext> | null = null;
 
   /**
    * Initializes the Firefox browser with persistent context for optimal performance.
@@ -79,62 +82,38 @@ export class FigmaRecorder {
   async initialize(): Promise<void> {
     logger.info('Initializing Firefox browser with persistent context...');
     
-    // Check if shared context is still connected
+    // Use singleton pattern to ensure only one context initialization at a time
+    if (!FigmaRecorder.sharedContext && !FigmaRecorder.contextInitialization) {
+      FigmaRecorder.contextInitialization = this.createSharedContext();
+    }
+    
+    // Wait for shared context to be ready
+    if (FigmaRecorder.contextInitialization) {
+      FigmaRecorder.sharedContext = await FigmaRecorder.contextInitialization;
+      FigmaRecorder.contextInitialization = null;
+    }
+    
+    // Verify context is still alive
     if (FigmaRecorder.sharedContext) {
       try {
-        // Test if context is still alive
+        // Test if context is still connected
         await FigmaRecorder.sharedContext.pages();
+        logger.info('Reusing existing Firefox persistent context');
       } catch (error) {
         logger.info('Shared context disconnected, creating new instance');
         FigmaRecorder.sharedContext = null;
         FigmaRecorder.browserRefCount = 0;
+        FigmaRecorder.contextInitialization = this.createSharedContext();
+        FigmaRecorder.sharedContext = await FigmaRecorder.contextInitialization;
+        FigmaRecorder.contextInitialization = null;
       }
-    }
-    
-    if (!FigmaRecorder.sharedContext) {
-      // Create persistent user data directory
-      const fs = await import('fs/promises');
-      try {
-        await fs.mkdir(FigmaRecorder.persistentDataDir, { recursive: true });
-      } catch (error) {
-        // Directory might already exist
-      }
-
-      // Use launchPersistentContext for better performance and session persistence
-      FigmaRecorder.sharedContext = await firefox.launchPersistentContext(FigmaRecorder.persistentDataDir, {
-        headless: false, // Keep visible for debugging and monitoring
-        args: [
-          '--disable-web-security', // Allow cross-origin requests for Figma
-          '--disable-features=VizDisplayCompositor', // Improve canvas rendering
-          '--disable-gpu-sandbox', // Improve GPU performance
-          '--disable-software-rasterizer', // Use hardware acceleration
-          '--no-sandbox', // Disable sandboxing for better performance
-          '--disable-dev-shm-usage', // Overcome limited resource problems
-          '--disable-extensions-except-webgl', // Keep WebGL for Figma
-        ],
-        viewport: { width: 1920, height: 1080 },
-        ignoreHTTPSErrors: true,
-        // Optimize for recording
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        // Enable hardware acceleration
-        hasTouch: false,
-        isMobile: false,
-        // Preload common resources
-        extraHTTPHeaders: {
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'max-age=3600'
-        },
-        // Shorter launch timeout is fine (only affects startup time)
-        timeout: 90000,
-        slowMo: 50 // Reduced delay for faster recording
-      });
-
-      logger.info('New Firefox persistent context created');
-    } else {
-      logger.info('Reusing existing Firefox persistent context');
     }
     
     this.context = FigmaRecorder.sharedContext;
+    if (!this.context) {
+      throw new Error('Failed to initialize browser context');
+    }
+    
     this.browser = this.context.browser(); // Get browser from context
     FigmaRecorder.browserRefCount++;
 
@@ -163,7 +142,58 @@ export class FigmaRecorder {
       }
     });
 
-    logger.info('Firefox browser initialized successfully');
+    logger.info(`Firefox browser initialized successfully (active sessions: ${FigmaRecorder.browserRefCount})`);
+  }
+
+  /**
+   * Creates a new shared browser context with optimized settings.
+   * This method is called only once per application lifecycle.
+   * 
+   * @private
+   * @returns Promise resolving to the created browser context
+   */
+  private async createSharedContext(): Promise<BrowserContext> {
+    logger.info('Creating new Firefox persistent context...');
+    
+    // Create persistent user data directory
+    const fs = await import('fs/promises');
+    try {
+      await fs.mkdir(FigmaRecorder.persistentDataDir, { recursive: true });
+    } catch (error) {
+      // Directory might already exist
+    }
+
+    // Use launchPersistentContext for better performance and session persistence
+    const context = await firefox.launchPersistentContext(FigmaRecorder.persistentDataDir, {
+      headless: false, // Keep visible for debugging and monitoring
+      args: [
+        '--disable-web-security', // Allow cross-origin requests for Figma
+        '--disable-features=VizDisplayCompositor', // Improve canvas rendering
+        '--disable-gpu-sandbox', // Improve GPU performance
+        '--disable-software-rasterizer', // Use hardware acceleration
+        '--no-sandbox', // Disable sandboxing for better performance
+        '--disable-dev-shm-usage', // Overcome limited resource problems
+        '--disable-extensions-except-webgl', // Keep WebGL for Figma
+      ],
+      viewport: { width: 1920, height: 1080 },
+      ignoreHTTPSErrors: true,
+      // Optimize for recording
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      // Enable hardware acceleration
+      hasTouch: false,
+      isMobile: false,
+      // Preload common resources
+      extraHTTPHeaders: {
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'max-age=3600'
+      },
+      // Shorter launch timeout is fine (only affects startup time)
+      timeout: 90000,
+      slowMo: 50 // Reduced delay for faster recording
+    });
+
+    logger.info('New Firefox persistent context created');
+    return context;
   }
 
   /**
@@ -793,14 +823,15 @@ export class FigmaRecorder {
       this.context = null;
       this.browser = null;
       
-      // Only close shared context when no more instances are using it
-      FigmaRecorder.browserRefCount--;
-      if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
-        await FigmaRecorder.sharedContext.close();
-        FigmaRecorder.sharedContext = null;
-        FigmaRecorder.browserRefCount = 0;
+      // Only decrement and close shared context if not already done by closePage()
+      if (FigmaRecorder.browserRefCount > 0) {
+        FigmaRecorder.browserRefCount--;
+        if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
+          await FigmaRecorder.sharedContext.close();
+          FigmaRecorder.sharedContext = null;
+          FigmaRecorder.browserRefCount = 0;
+        }
       }
-      this.browser = null;
       
       logger.info('Cleanup completed');
     } catch (error) {
@@ -824,6 +855,42 @@ export class FigmaRecorder {
       await FigmaRecorder.sharedContext.close();
       FigmaRecorder.sharedContext = null;
       FigmaRecorder.browserRefCount = 0;
+    }
+  }
+
+  /**
+   * Closes the current page without affecting the shared browser context.
+   * Used when stopping individual recording sessions while keeping the browser alive for other sessions.
+   * 
+   * @example
+   * ```typescript
+   * await recorder.closePage();
+   * console.log('Page closed, browser context remains active');
+   * ```
+   */
+  async closePage(): Promise<void> {
+    logger.info('Closing recording page...');
+    
+    try {
+      if (this.page && !this.page.isClosed()) {
+        await this.page.close();
+        this.page = null;
+        logger.info('Recording page closed successfully');
+      }
+      
+      // Decrement the reference count since this session is ending
+      FigmaRecorder.browserRefCount--;
+      logger.info(`Page closed (active sessions: ${FigmaRecorder.browserRefCount})`);
+      
+      // Only close shared context if no more sessions are active
+      if (FigmaRecorder.browserRefCount <= 0 && FigmaRecorder.sharedContext) {
+        logger.info('No more active sessions, closing shared browser context');
+        await FigmaRecorder.sharedContext.close();
+        FigmaRecorder.sharedContext = null;
+        FigmaRecorder.browserRefCount = 0;
+      }
+    } catch (error) {
+      logger.error('Error closing page:', error);
     }
   }
 

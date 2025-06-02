@@ -23,7 +23,7 @@ app.use(express.json());
 interface RecordingSession {
   id: string;
   recorder: FigmaRecorder;
-  status: 'preparing' | 'recording' | 'processing' | 'completed' | 'failed';
+  status: 'preparing' | 'recording' | 'processing' | 'stopping' | 'completed' | 'failed';
   startTime: Date;
   endTime?: Date;
   options: RecordingOptions;
@@ -174,13 +174,21 @@ app.post('/recording/:sessionId/stop', async (req, res) => {
     logger.info(`Stopping recording session ${sessionId}`);
     
     // Stop the recorder gracefully
-    session.status = 'processing';
+    session.status = 'stopping';
     await session.recorder.stopRecording();
+    
+    // Close the page to free up browser resources
+    await session.recorder.closePage();
+    
+    // Mark as completed after successful stop
+    session.status = 'completed';
+    session.endTime = new Date();
     
     res.json({ 
       message: 'Recording stopped successfully',
       sessionId,
-      status: 'processing'
+      status: session.status,
+      outputPath: session.outputPath
     });
     
   } catch (error) {
@@ -511,6 +519,13 @@ async function recordingProcess(session: RecordingSession) {
     
     // Start the recording
     const result = await session.recorder.startRecording(session.options);
+    
+    // Check if session was manually stopped during recording by checking current status
+    const currentSession = activeSessions.get(session.id);
+    if (!currentSession || currentSession.status === 'completed' || currentSession.status === 'stopping') {
+      logger.info(`Recording session ${session.id} was stopped manually, skipping result processing`);
+      return;
+    }
     
     if (result.success) {
       session.outputPath = result.outputPath;
