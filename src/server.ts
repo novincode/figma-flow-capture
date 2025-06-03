@@ -307,10 +307,25 @@ app.get('/recordings', async (req, res) => {
           const recordingPath = path.join(recordingsDir, entry.name);
           const stats = await fs.stat(recordingPath);
           
-          // Check for recording files
+          // Check for recording files and determine video format
           const files = await fs.readdir(recordingPath);
-          const hasVideo = files.some(file => file.endsWith('.mp4') || file.endsWith('.webm'));
+          
+          // Check for video files and determine format
+          const videoFile = files.find(file => 
+            file.endsWith('.mp4') || 
+            file.endsWith('.webm') || 
+            file.endsWith('.gif')
+          );
+          
+          const hasVideo = !!videoFile;
           const hasFrames = files.includes('frames');
+          
+          // Extract video format from filename
+          let videoFormat = null;
+          if (videoFile) {
+            const extension = videoFile.split('.').pop()?.toUpperCase();
+            videoFormat = extension;
+          }
           
           recordings.push({
             name: entry.name,
@@ -318,7 +333,8 @@ app.get('/recordings', async (req, res) => {
             createdAt: stats.birthtime.toISOString(),
             modifiedAt: stats.mtime.toISOString(),
             hasVideo,
-            hasFrames
+            hasFrames,
+            videoFormat // Add video format to the response
           });
         }
       }
